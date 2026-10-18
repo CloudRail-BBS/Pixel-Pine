@@ -1,0 +1,15 @@
+{
+  "name": "pixelsong",
+  "version": "1.6.0",
+  "private": true,
+  "description": "像素松参赛平台",
+  "scripts": {
+    "start": "node server.js",
+    "preflight": "node scripts/preflight.js",
+    "check": "node scripts/preflight.js",
+    "smoke": "node scripts/smoke.js"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

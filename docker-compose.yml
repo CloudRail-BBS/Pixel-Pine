@@ -1,0 +1,20 @@
+services:
+  pixelsong:
+    build: .
+    image: pixelsong:latest
+    container_name: pixelsong
+    restart: unless-stopped
+    ports:
+      - "${HOST_PORT:-3000}:3000"
+    environment:
+      PORT: 3000
+      GEETEST_CAPTCHA_ID: ${GEETEST_CAPTCHA_ID:-}
+      GEETEST_CAPTCHA_KEY: ${GEETEST_CAPTCHA_KEY:-}
+      CNKD_CLIENT_ID: ${CNKD_CLIENT_ID:-}
+      CNKD_CLIENT_SECRET: ${CNKD_CLIENT_SECRET:-}
+      CNKD_REDIRECT_URI: ${CNKD_REDIRECT_URI:-}
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
