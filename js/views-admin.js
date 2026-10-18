@@ -62,7 +62,7 @@ export async function adminView(el, path) {
     listAllAppeals().catch(() => []),
     db.from("profiles").select("*").order("created_at").then(unwrap).catch(() => []),
     db.from("team_members").select("team_id, owner_id, member_name").then(unwrap).catch(() => []),
-    db.from("signatures").select("owner_id, agreed_name, created_at, doc_version").then(unwrap).catch(() => []),
+    db.from("signatures").select("owner_id, agreed_name, created_at, doc_version, doc_key").then(unwrap).catch(() => []),
     listDocuments().catch(() => []),
     listCertificates().catch(() => []),
     listPartners().catch(() => []),
@@ -157,13 +157,29 @@ function overviewTab(d) {
     </div>
 
     <div class="card block">
-      <div class="card-head"><h2>诚信公约签署</h2>
-        <span class="card-note">${(d.sigs || []).length} / ${(d.profiles || []).length} 个账号</span>
+      <div class="card-head"><h2>签署与确认</h2>
+        <span class="card-note">${((d.profiles || []).length) || 0} 个账号</span>
       </div>
-      <div class="bar" style="margin-bottom:10px">
-        <i style="width:${(d.profiles || []).length ? Math.round(((d.sigs || []).length / d.profiles.length) * 100) : 0}%"></i>
-      </div>
-      <p class="tiny dim" style="margin:0">全队成员各自签署后，队长才能提交作品。未签署的账号在提交页会被拦下并提示具体成员。</p>
+      ${(() => {
+        const total = (d.profiles || []).length || 0;
+        const integ = (d.sigs || []).filter((s) => (s.doc_key || "integrity") === "integrity");
+        const rules = (d.sigs || []).filter((s) => s.doc_key === "rules");
+        const pct = (n) => (total ? Math.round((n / total) * 100) : 0);
+        return `
+          <div class="row-between small" style="margin-bottom:6px">
+            <span>《诚信比赛公约》</span>
+            <span class="mono muted">${integ.length} / ${total}</span>
+          </div>
+          <div class="bar" style="margin-bottom:12px"><i style="width:${pct(integ.length)}%"></i></div>
+
+          <div class="row-between small" style="margin-bottom:6px">
+            <span>《活动规则》阅读确认</span>
+            <span class="mono muted">${rules.length} / ${total}</span>
+          </div>
+          <div class="bar" style="margin-bottom:10px"><i style="width:${pct(rules.length)}%"></i></div>
+
+          <p class="tiny dim" style="margin:0">公约需全队成员各自签署才能提交作品；规则确认在提交时弹出，每人每版本一次，规则正文更新后需重新确认。</p>`;
+      })()}
     </div>
 
     <div class="card block">

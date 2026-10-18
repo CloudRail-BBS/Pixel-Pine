@@ -1,4 +1,4 @@
-import { cloud, db, state, unwrap, sessionUid, isAdmin, cached, invalidate } from "./core.js";
+import { cloud, db, state, unwrap, sessionUid, isAdmin, cached, invalidate, sha256Hex } from "./core.js";
 import { DIMENSIONS, TRACKS, trackOf, INTEGRITY_DOC } from "./config.js";
 
 const uid = () => sessionUid();
@@ -538,4 +538,56 @@ export async function publicWork(id) {
   return unwrap(
     await db.from("submissions").select("*").eq("id", id).eq("status", "public").maybeSingle()
   );
+}
+
+/* ---------------- 活动规则阅读确认 ---------------- */
+
+/** 当前规则版本 + 文本哈希；规则正文在后台可改，版本号随之递增 */
+export async function rulesFingerprint() {
+  const doc = await getDocument("rules").catch(() => null);
+  if (!doc) return null;
+  const body = String(doc.body || "");
+  return {
+    title: doc.title || "活动规则",
+    body,
+    version: String(doc.version ?? 1),
+    hash: await sha256Hex(body),
+    updatedAt: doc.updated_at,
+  };
+}
+
+export async function getRulesAck(version) {
+  if (!uid()) return null;
+  return unwrap(
+    await db
+      .from("signatures")
+      .select("*")
+      .eq("owner_id", uid())
+      .eq("doc_key", "rules")
+      .eq("doc_version", String(version))
+      .maybeSingle()
+  );
+}
+
+export async function ackRules({ version, hash, name }) {
+  try {
+    const rows = unwrap(
+      await db
+        .from("signatures")
+        .insert({
+          doc_key: "rules",
+          doc_version: String(version),
+          doc_hash: hash,
+          agreed_name: name,
+          owner_name: state.me?.nickname || null,
+          user_agent: (navigator.userAgent || "").slice(0, 300),
+        })
+        .select()
+    );
+    return (rows && rows[0]) || null;
+  } catch (e) {
+    // 已确认过（唯一约束）视为成功，避免重复点击报错
+    if (e?.code === "23505" || e?.error?.code === "23505") return null;
+    throw e;
+  }
 }

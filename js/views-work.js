@@ -1,6 +1,6 @@
 import {
   cloud, state, shell, bindShell, navigate, toast, esc, fmtDate, fmtFull, timeLeft, ago,
-  loadMe, requireLogin, busy, errMsg, modal, confirmBox, db, unwrap, isAdmin, sha256Hex,
+  loadMe, requireLogin, busy, errMsg, modal, confirmBox, db, unwrap, isAdmin, sha256Hex, renderDoc,
 } from "./core.js";
 import { TRACKS, trackOf, DIMENSIONS, PRESENT_RUBRIC, STATUS_TEXT, TEAM_STATUS, INTEGRITY_DOC, integrityPlainText } from "./config.js";
 import {
@@ -14,6 +14,7 @@ import {
   listAnnouncements, createAnnouncement, deleteAnnouncement, fileAppeal, listMyAppeals,
   listAllAppeals, replyAppeal, saveActivity, canEditSubmission,
   getMySignature, listSignaturesFor, signIntegrity, listMyCertificates,
+  rulesFingerprint, getRulesAck, ackRules,
 } from "./api.js";
 
 const val = (root, sel) => (root.querySelector(sel)?.value || "").trim();
@@ -322,6 +323,99 @@ export async function teamView(el) {
 
 /* ============================ 作品 ============================ */
 
+/* ---------------------- 提交前：活动规则阅读确认 ---------------------- */
+
+/**
+ * 弹出规则全文，必须滚到底并勾选才能继续。
+ * 返回 true 表示已确认；点取消、按 Esc、点遮罩都返回 false。
+ */
+function rulesGate(rules) {
+  return new Promise((resolve) => {
+    let done = false;
+    const finish = (v) => {
+      if (done) return;
+      done = true;
+      resolve(v);
+    };
+    const { html } = renderDoc(rules.body || "");
+
+    const m = modal(
+      `<h3 style="margin-bottom:4px">提交前请确认已阅读活动规则</h3>
+       <p class="tiny dim" style="margin:0 0 14px">
+         规则版本 <span class="mono">v${esc(rules.version)}</span> ·
+         校验码 <span class="mono">${esc(String(rules.hash).slice(0, 12))}</span>
+       </p>
+       <div class="rg-body" id="rg-scroll">${html}</div>
+       <div class="rg-foot">
+         <label class="rg-check">
+           <input type="checkbox" id="rg-agree" disabled />
+           <span>我已通读并同意遵守上述规则，理解违规将被取消参赛与评奖资格。</span>
+         </label>
+         <div class="row" style="justify-content:flex-end;gap:9px;margin-top:14px">
+           <button class="btn btn-ghost" data-x="cancel">取消</button>
+           <button class="btn btn-primary" data-x="ok" disabled>确认并继续提交</button>
+         </div>
+       </div>`,
+      {
+        onMount(host) {
+          const panel = host.querySelector(".modal");
+          if (panel) panel.classList.add("modal-wide");
+          const box = host.querySelector("#rg-scroll");
+          const cb = host.querySelector("#rg-agree");
+          const ok = host.querySelector('[data-x="ok"]');
+          const tip = document.createElement("p");
+          tip.className = "tiny dim";
+          tip.style.cssText = "margin:0 0 10px";
+          tip.textContent = "请向下滚动阅读完整规则";
+          host.querySelector(".rg-foot").insertBefore(tip, host.querySelector(".rg-check"));
+
+          const nearBottom = () => box.scrollHeight - box.scrollTop - box.clientHeight < 36;
+          const unlock = () => {
+            if (!cb.disabled) return;
+            cb.disabled = false;
+            tip.textContent = "已到规则末尾，可以勾选确认";
+            tip.style.color = "var(--accent)";
+          };
+          box.onscroll = () => {
+            if (nearBottom()) unlock();
+          };
+          // 内容不足一屏时直接解锁
+          if (nearBottom()) unlock();
+
+          cb.onchange = () => {
+            ok.disabled = !cb.checked;
+          };
+          host.querySelector('[data-x="cancel"]').onclick = () => {
+            m.close();
+            finish(false);
+          };
+          ok.onclick = () => {
+            m.close();
+            finish(true);
+          };
+        },
+      }
+    );
+
+    // 点遮罩会直接移除弹窗，这里兜底，避免 Promise 永远悬着
+    const obs = new MutationObserver(() => {
+      if (!document.body.contains(m.host)) {
+        obs.disconnect();
+        finish(false);
+      }
+    });
+    obs.observe(document.body, { childList: true });
+  });
+}
+
+async function recordRulesAck(rules) {
+  await ackRules({
+    version: rules.version,
+    hash: rules.hash,
+    name: state.me?.nickname || state.me?.owner_name || "参赛者",
+  });
+}
+
 export async function workView(el) {
   if (!requireLogin(el)) return;
   const membership = await myMembership();
@@ -351,6 +445,10 @@ export async function workView(el) {
     unsigned = members;
   }
   const sigOk = unsigned.length === 0;
+
+  const rules = await rulesFingerprint().catch(() => null);
+  const rulesAck = rules ? await getRulesAck(rules.version).catch(() => null) : null;
+
   const canSubmit = (editable || fixing) && members.length >= 3 && sigOk;
 
   const d = sub?.detail || {};
@@ -487,6 +585,25 @@ export async function workView(el) {
           : ""
       }
     </div>
+
+    ${rules
+      ? `<div class="rule-ack ${rulesAck ? "is-ok" : "is-todo"}">
+          <span class="rule-ack-dot"></span>
+          <div class="rule-ack-text">
+            <b>《活动规则》v${esc(rules.version)}</b>
+            <span>${
+              rulesAck
+                ? `已确认阅读 · ${esc(fmtFull(rulesAck.created_at))}`
+                : "提交前需要通读并勾选确认，每人只需一次；规则更新后需要重新确认"
+            }</span>
+          </div>
+          ${
+            rulesAck
+              ? `<span class="tag tag-teal">已确认</span>`
+              : `<button class="btn btn-sm" id="btn-read-rules">现在阅读</button>`
+          }
+        </div>`
+      : ""}
 
     <div class="row row-wrap block" style="gap:10px">
       <button class="btn" id="btn-draft">保存草稿</button>
@@ -641,6 +758,18 @@ export async function workView(el) {
     if (lastScan && lastScan.enabled && lastScan.status === "malicious") {
       return toast("病毒扫描检出恶意内容，无法提交", "err");
     }
+
+    // 提交前必过的一道：通读规则并确认
+    if (rules && !rulesAck) {
+      const read = await rulesGate(rules);
+      if (!read) return;
+      try {
+        await recordRulesAck(rules);
+      } catch (err) {
+        return toast("规则确认未能保存：" + errMsg(err), "err");
+      }
+    }
+
     if (!(await confirmBox("提交确认", `提交后将生成不可修改的快照 v${(sub?.version_no) || 1}，截止前可再次提交覆盖。确定提交吗？`, "提交"))) return;
     const btn = e.currentTarget;
     busy(btn, true, "提交中…");
@@ -653,6 +782,23 @@ export async function workView(el) {
       busy(btn, false);
     }
   };
+
+  const readBtn = el.querySelector("#btn-read-rules");
+  if (readBtn && rules) {
+    readBtn.onclick = async () => {
+      const read = await rulesGate(rules);
+      if (!read) return;
+      busy(readBtn, true, "保存中…");
+      try {
+        await recordRulesAck(rules);
+        toast("已记录规则确认", "ok");
+        workView(el);
+      } catch (err) {
+        toast(errMsg(err), "err");
+        busy(readBtn, false);
+      }
+    };
+  }
 }
 
 /* ============================ 评审 ============================ */
