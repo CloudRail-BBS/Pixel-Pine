@@ -912,6 +912,53 @@ a.org-card:hover .org-out { opacity: 1; }
   width: 0.34em; height: 0.34em; transform: rotate(45deg);
   background: var(--cert-accent); opacity: 0.75;
 }
+
+/* 参赛证书：像素点饰线，呼应站点像素网格 */
+.cert-orn--pixel { gap: 0.4em; margin-bottom: 1.6em; }
+.cert-orn--pixel i,
+.cert-orn--pixel i:last-child {
+  width: 0.4em; height: 0.4em; border-radius: 1px;
+  background: var(--cert-accent); opacity: 0.4;
+}
+.cert-orn--pixel i:nth-child(2) {
+  width: 0.58em; height: 0.58em; opacity: 1; transform: translateY(-0.03em);
+}
+
+/* 参赛证书：成绩记录带 */
+.cert-facts {
+  display: flex; align-items: stretch;
+  width: 100%; max-width: 40em; margin-top: 1.5em;
+  border-top: 1px solid var(--cert-line-soft);
+  border-bottom: 1px solid var(--cert-line-soft);
+}
+.cert-facts > div {
+  flex: 1 1 0; min-width: 0; padding: 0.92em 1.1em;
+  border-left: 1px solid var(--cert-line-soft);
+}
+.cert-facts > div:first-child { border-left: none; }
+.cert-facts span {
+  display: block; font-family: var(--mono); font-size: 0.66em;
+  letter-spacing: 0.22em; text-indent: 0.22em;
+  color: #8f8471; margin-bottom: 0.4em;
+}
+.cert-facts b {
+  display: block; font-family: var(--cert-serif); font-size: 1em;
+  font-weight: 600; color: #2f2b24; letter-spacing: 0.05em;
+  line-height: 1.5; word-break: break-word; text-wrap: balance;
+}
+
+/* 落款上方的收束线：短、居中、实心，比整条淡线更利落 */
+.cert-close {
+  width: 7.5em; height: 1px;
+  margin: auto auto 1.4em;
+  background: var(--cert-line);
+  position: relative;
+}
+.cert-close::after {
+  content: ""; position: absolute; left: 50%; top: -0.16em;
+  width: 0.34em; height: 0.34em; margin-left: -0.17em;
+  background: var(--cert-accent); transform: rotate(45deg); opacity: 0.8;
+}
 .cert-page--formal .cert-lead {
   font-size: 0.78em; letter-spacing: 0.52em; text-indent: 0.52em;
   color: #a2977f; margin: 0 0 0.9em;
@@ -925,7 +972,7 @@ a.org-card:hover .org-out { opacity: 1; }
   display: inline-block; min-width: 5em;
 }
 .cert-page--formal .cert-text {
-  font-size: 0.94em; line-height: 2.05; color: #453f33;
+  font-size: 0.94em; line-height: 2.05; color: #3b352b;
   max-width: 44em; margin: 0; word-break: keep-all;
 }
 .cert-page--formal .cert-text b { font-weight: 600; color: var(--cert-ink); }
@@ -944,7 +991,7 @@ a.org-card:hover .org-out { opacity: 1; }
 
 /* 落款 */
 .cert-page--formal .cert-foot {
-  align-items: center; padding-top: 0.4em; gap: 1.4em;
+  align-items: center; padding-top: 0; margin-top: 0; gap: 1.4em;
 }
 .cert-page--formal .cert-field span {
   color: #a2977f; letter-spacing: 0.22em; font-size: 0.88em;
