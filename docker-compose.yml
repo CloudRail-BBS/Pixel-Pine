@@ -13,6 +13,7 @@ services:
       CNKD_CLIENT_ID: ${CNKD_CLIENT_ID:-}
       CNKD_CLIENT_SECRET: ${CNKD_CLIENT_SECRET:-}
       CNKD_REDIRECT_URI: ${CNKD_REDIRECT_URI:-}
+      VT_API_KEY: ${VT_API_KEY:-}
     logging:
       driver: json-file
       options:

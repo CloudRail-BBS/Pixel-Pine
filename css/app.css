@@ -813,3 +813,184 @@ a.org-card:hover .org-out { opacity: 1; }
   .work-cover { height: 70px; }
   .wk-search { width: 100%; }
 }
+
+/* ---------- 证书（正式版） ---------- */
+.cert-page--formal {
+  --cert-ink: #2a2620;
+  --cert-muted: #6f6653;
+  --cert-line: rgba(146, 118, 64, 0.55);
+  --cert-line-soft: rgba(146, 118, 64, 0.24);
+  --cert-accent: #2f6b55;
+  --cert-accent-soft: rgba(47, 107, 85, 0.12);
+  --cert-serif: "Songti SC", "STSong", "SimSun", "Source Han Serif SC", "Noto Serif SC", Georgia, serif;
+
+  padding: 1.9em;
+  color: var(--cert-ink);
+  background:
+    radial-gradient(120% 130% at 50% -10%, #fffdf7 0%, #fbf7ec 46%, #f3ecdc 100%);
+  -webkit-print-color-adjust: exact;
+  print-color-adjust: exact;
+  box-shadow: 0 26px 70px rgba(0, 0, 0, 0.6), 0 2px 0 rgba(255, 255, 255, 0.06) inset;
+}
+.cert-page--formal.is-award {
+  --cert-accent: #8a6a24;
+  --cert-accent-soft: rgba(138, 106, 36, 0.13);
+}
+/* 纸张纹理：极细点阵，压在内容之下 */
+.cert-page--formal::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  opacity: 0.5;
+  background-image: radial-gradient(rgba(120, 98, 58, 0.16) 0.45px, transparent 0.45px);
+  background-size: 4px 4px;
+}
+
+.cert-page--formal .cert-inner {
+  z-index: 1;
+  border: 1px solid var(--cert-line);
+  box-shadow:
+    inset 0 0 0 3px #faf6ea,
+    inset 0 0 0 4px var(--cert-line-soft),
+    inset 0 0 70px rgba(140, 112, 60, 0.09);
+  padding: 2em 3em 1.6em;
+}
+.cert-page--formal .cert-inner::before,
+.cert-page--formal .cert-inner::after { content: none; }
+
+.cert-corners { position: absolute; inset: 0.62em; pointer-events: none; }
+.cert-corners i {
+  position: absolute; width: 1.4em; height: 1.4em;
+  border: 0.1em solid var(--cert-accent); opacity: 0.5;
+}
+.cert-corners i:nth-child(1) { top: 0; left: 0; border-right: none; border-bottom: none; }
+.cert-corners i:nth-child(2) { top: 0; right: 0; border-left: none; border-bottom: none; }
+.cert-corners i:nth-child(3) { bottom: 0; left: 0; border-right: none; border-top: none; }
+.cert-corners i:nth-child(4) { bottom: 0; right: 0; border-left: none; border-top: none; }
+
+/* 页眉 */
+.cert-brand { display: flex; align-items: center; gap: 0.62em; }
+.cert-brand-text {
+  font-family: var(--cert-serif); font-size: 0.92em; letter-spacing: 0.3em;
+  color: var(--cert-muted); line-height: 1.2;
+}
+.cert-brand-text small {
+  display: block; font-family: var(--mono); font-size: 0.62em;
+  letter-spacing: 0.34em; color: #a89c82; margin-top: 0.22em;
+}
+.cert-head-right { text-align: right; }
+.cert-series {
+  font-family: var(--mono); font-size: 0.6em; letter-spacing: 0.24em; color: #a89c82;
+}
+.cert-code {
+  font-family: var(--mono); font-size: 0.72em; letter-spacing: 0.1em;
+  color: var(--cert-muted); margin-top: 0.4em;
+}
+
+/* 主体：居中排布 */
+.cert-page--formal .cert-body {
+  flex: 1;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  text-align: center; padding: 0.8em 0 1.4em;
+}
+.cert-eyebrow {
+  font-family: var(--mono); font-size: 0.68em; letter-spacing: 0.44em;
+  color: #a2977f; text-indent: 0.44em; margin-bottom: 1em;
+}
+.cert-page--formal .cert-kind {
+  font-family: var(--cert-serif);
+  font-size: 2.5em; font-weight: 600;
+  letter-spacing: 0.3em; text-indent: 0.3em;
+  color: var(--cert-ink); margin: 0 0 0.55em;
+}
+.cert-orn { display: flex; align-items: center; gap: 0.55em; margin-bottom: 1.5em; }
+.cert-orn i {
+  width: 3.4em; height: 1px;
+  background: linear-gradient(90deg, transparent, var(--cert-line));
+}
+.cert-orn i:last-child { background: linear-gradient(90deg, var(--cert-line), transparent); }
+.cert-orn b {
+  width: 0.34em; height: 0.34em; transform: rotate(45deg);
+  background: var(--cert-accent); opacity: 0.75;
+}
+.cert-page--formal .cert-lead {
+  font-size: 0.78em; letter-spacing: 0.52em; text-indent: 0.52em;
+  color: #a2977f; margin: 0 0 0.9em;
+}
+.cert-page--formal .cert-name {
+  font-family: var(--cert-serif);
+  font-size: 2.55em; font-weight: 600; line-height: 1.35;
+  letter-spacing: 0.1em; color: var(--cert-ink);
+  border-bottom: 0.035em solid var(--cert-line-soft);
+  padding: 0 0.55em 0.16em; margin-bottom: 1.15em;
+  display: inline-block; min-width: 5em;
+}
+.cert-page--formal .cert-text {
+  font-size: 0.94em; line-height: 2.05; color: #453f33;
+  max-width: 44em; margin: 0; word-break: keep-all;
+}
+.cert-page--formal .cert-text b { font-weight: 600; color: var(--cert-ink); }
+.cert-text--tail { margin-top: 0.55em !important; }
+.cert-page--formal .cert-sub {
+  font-size: 0.85em; color: #948a76; letter-spacing: 0.08em;
+}
+.cert-award-line {
+  font-family: var(--cert-serif);
+  font-size: 2.05em; font-weight: 600;
+  letter-spacing: 0.36em; text-indent: 0.36em;
+  color: var(--cert-accent);
+  margin-top: 0.42em; padding-bottom: 0.18em;
+  border-bottom: 1px solid var(--cert-accent-soft);
+}
+
+/* 落款 */
+.cert-page--formal .cert-foot {
+  align-items: center; padding-top: 0.4em; gap: 1.4em;
+}
+.cert-page--formal .cert-field span {
+  color: #a2977f; letter-spacing: 0.22em; font-size: 0.88em;
+}
+.cert-page--formal .cert-field b {
+  font-size: 0.96em; color: #3a352b; letter-spacing: 0.06em;
+}
+.cert-sign { display: flex; flex-direction: column; align-items: center; gap: 0.12em; }
+.cert-sign .cert-seal--svg {
+  position: static; width: 5.6em; height: 5.6em;
+  border: none; border-radius: 0; opacity: 0.84;
+  transform: rotate(-6deg); margin-bottom: -0.1em;
+}
+.cert-issuer {
+  font-family: var(--cert-serif); font-size: 1em;
+  letter-spacing: 0.18em; text-indent: 0.18em; color: #3a352b;
+}
+.cert-page--formal .cert-note {
+  margin: 0.9em 0 0; font-size: 0.68em; color: #a89c82; letter-spacing: 0.06em;
+  text-align: center;
+}
+
+/* 印章本体 */
+.seal-svg { width: 100%; height: 100%; display: block; overflow: visible; }
+.seal-ring-line { fill: none; stroke: #b0442f; stroke-width: 2.2; }
+.seal-ring-line.thin { stroke-width: 0.7; opacity: 0.75; }
+.seal-arc {
+  fill: #b0442f; font-size: 7.4px; letter-spacing: 0.6px;
+  font-family: var(--cert-serif);
+}
+.seal-star { fill: #b0442f; }
+.seal-year {
+  fill: #b0442f; font-size: 7px; font-family: var(--mono); letter-spacing: 0.5px;
+}
+
+@media (max-width: 760px) {
+  .cert-shell { align-items: flex-start; overflow-x: auto; padding-bottom: 96px; }
+  .cert-page--formal { width: 660px; flex: 0 0 auto; font-size: 11px; }
+  .cert-toolbar { width: 660px; flex: 0 0 auto; }
+}
+
+@media print {
+  .cert-page--formal { font-size: 3.55mm; }
+  .cert-page--formal::after { opacity: 0.34; }
+  .cert-page--formal .cert-inner { box-shadow: inset 0 0 0 3px #faf6ea, inset 0 0 0 4px rgba(146, 118, 64, 0.24); }
+}

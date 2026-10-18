@@ -1,11 +1,36 @@
 import { state, shell, bindShell, toast, esc, fmtDate, fmtFull, requireLogin, busy, errMsg, db } from "./core.js";
-import { getCertificateByCode, listMyCertificates, listVersions, getMySignature } from "./api.js";
+import { getCertificateByCode, listMyCertificates, listVersions, getMySignature, listPartners } from "./api.js";
 import { trackOf } from "./config.js";
 
 const isAward = (c) => c.award_key !== "participant";
 
-function certDocument(c) {
+/** 印章：环文 + 五角星 + 年份，用 SVG 画，打印与屏幕完全一致 */
+function sealMark(year) {
+  return `
+  <div class="cert-seal cert-seal--svg" aria-hidden="true">
+    <svg viewBox="0 0 100 100" class="seal-svg">
+      <defs>
+        <path id="sealArc" d="M50,50 m-37,0 a37,37 0 1,1 74,0" />
+      </defs>
+      <circle cx="50" cy="50" r="47" class="seal-ring-line" />
+      <circle cx="50" cy="50" r="41.5" class="seal-ring-line thin" />
+      <text class="seal-arc">
+        <textPath href="#sealArc" startOffset="50%" text-anchor="middle">像素松 · 赛事认证 · PIXELSONG</textPath>
+      </text>
+      <polygon class="seal-star" points="50,38 52.9,45.9 61.4,46.3 54.8,51.6 57.1,59.7 50,55 42.9,59.7 45.2,51.6 38.6,46.3 47.1,45.9" />
+      ${year ? `<text x="50" y="73" text-anchor="middle" class="seal-year">${esc(year)}</text>` : ""}
+    </svg>
+  </div>`;
+}
+
+function certDocument(c, issuer) {
   const track = trackOf(c.track);
+  const award = isAward(c);
+  const year = (() => {
+    const d = new Date(c.issued_at);
+    return isNaN(d) ? "" : String(d.getFullYear());
+  })();
+
   return `
   <div class="cert-shell">
     <div class="cert-toolbar no-print">
@@ -15,32 +40,55 @@ function certDocument(c) {
         <button class="btn btn-sm btn-primary" id="btn-print">打印 / 导出 PDF</button>
       </div>
     </div>
-    <div class="cert-page" id="cert-print">
+
+    <div class="cert-page cert-page--formal ${award ? "is-award" : "is-part"}" id="cert-print">
       <div class="cert-inner">
+        <div class="cert-corners"><i></i><i></i><i></i><i></i></div>
+
         <div class="cert-head">
-          <div class="cert-mark"><i></i><i></i><i></i><i></i></div>
-          <div class="cert-org">像 素 松<span>PIXELSONG</span></div>
+          <div class="cert-brand">
+            <span class="cert-mark"><i></i><i></i><i></i><i></i></span>
+            <span class="cert-brand-text">像素松<small>PIXELSONG</small></span>
+          </div>
+          <div class="cert-head-right">
+            <div class="cert-series">${award ? "AWARD CERTIFICATE" : "CERTIFICATE OF PARTICIPATION"}</div>
+            <div class="cert-code">${esc(c.cert_code)}</div>
+          </div>
         </div>
 
-        <div class="cert-kind">${isAward(c) ? "获 奖 证 书" : "参 赛 证 书"}</div>
-        <div class="cert-rule"></div>
+        <div class="cert-body">
+          <div class="cert-eyebrow">${esc(track.game || "")} · ${esc(track.type || "")}</div>
+          <h1 class="cert-kind">${award ? "获奖证书" : "参赛证书"}</h1>
+          <div class="cert-orn"><i></i><b></b><i></i></div>
 
-        <p class="cert-lead">兹证明</p>
-        <div class="cert-name">${esc(c.holder_name)}</div>
+          <p class="cert-lead">兹 证 明</p>
+          <div class="cert-name">${esc(c.holder_name)}</div>
 
-        <p class="cert-text">
-          于「像素松」限时创作活动中，作为 <b>${esc(c.team_name || "参赛队伍")}</b> 成员，
-          提交作品《<b>${esc(c.work_title)}</b>》<br />
-          <span class="cert-sub">赛道 ${esc(c.track)} · ${esc(track.name)}</span><br />
-          ${isAward(c) ? `经评审委员会评定，荣获 <b class="cert-award">${esc(c.award_name)}</b>。` : "完成全部参赛流程，特发此证，以资纪念。"}
-        </p>
+          <p class="cert-text">
+            于「像素松」限时创作活动中，作为 <b>${esc(c.team_name || "参赛队伍")}</b> 成员，
+            提交作品《<b>${esc(c.work_title)}</b>》。<br />
+            <span class="cert-sub">赛道 ${esc(c.track)} · ${esc(track.name)}</span>
+          </p>
+
+          ${
+            award
+              ? `<p class="cert-text cert-text--tail">经评审委员会评定，荣获</p>
+                 <div class="cert-award-line">${esc(c.award_name)}</div>`
+              : `<p class="cert-text cert-text--tail">完成全部参赛流程，特发此证，以资纪念。</p>`
+          }
+        </div>
 
         <div class="cert-foot">
           <div class="cert-field">
             <span>证书编号</span>
             <b>${esc(c.cert_code)}</b>
           </div>
-          <div class="cert-seal"><div class="seal-ring">像<br />素<br />松</div></div>
+
+          <div class="cert-sign">
+            <div class="cert-issuer">${esc(issuer)}</div>
+            ${sealMark(year)}
+          </div>
+
           <div class="cert-field right">
             <span>颁发日期</span>
             <b>${esc(fmtFull(c.issued_at).slice(0, 10))}</b>
@@ -51,6 +99,17 @@ function certDocument(c) {
       </div>
     </div>
   </div>`;
+}
+
+/** 落款取主办单位名称；没配就退回默认值 */
+async function issuerName() {
+  try {
+    const list = await listPartners();
+    const host = list.find((p) => p.role === "host") || list[0];
+    return host?.name || "像素松组委会";
+  } catch (_) {
+    return "像素松组委会";
+  }
 }
 
 /* ---------------------------- 我的证书 ---------------------------- */
@@ -124,7 +183,7 @@ export async function certDetailView(el, path) {
     return;
   }
 
-  el.innerHTML = certDocument(cert);
+  el.innerHTML = certDocument(cert, await issuerName());
   const btn = el.querySelector("#btn-print");
   if (btn) btn.onclick = () => window.print();
 }
