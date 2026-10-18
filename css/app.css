@@ -94,15 +94,14 @@ p:last-child { margin-bottom: 0; }
 
 .boot { display: flex; align-items: center; justify-content: center; min-height: 100vh; color: var(--muted); }
 .boot-inner { text-align: center; }
-.boot-mark { display: flex; gap: 6px; justify-content: center; margin-bottom: 16px; }
-.boot-mark i { width: 9px; height: 9px; background: var(--accent); border-radius: 2px; animation: pulse 1.3s infinite ease-in-out; }
-.boot-mark i:nth-child(2) { animation-delay: 0.14s; }
-.boot-mark i:nth-child(3) { animation-delay: 0.28s; }
-.boot-mark i:nth-child(4) { animation-delay: 0.42s; }
-.boot-mark i:nth-child(5) { animation-delay: 0.56s; }
-@keyframes pulse {
-  0%, 100% { transform: translateY(0) scale(0.85); opacity: 0.28; }
-  50% { transform: translateY(-6px) scale(1); opacity: 1; }
+.boot-logo {
+  width: 46px; height: 46px; display: block; margin: 0 auto 18px;
+  image-rendering: pixelated;
+  animation: bootPulse 1.5s ease-in-out infinite;
+}
+@keyframes bootPulse {
+  0%, 100% { opacity: 0.42; transform: scale(0.93); }
+  50% { opacity: 1; transform: scale(1); }
 }
 
 header.top {
@@ -136,13 +135,12 @@ header.top {
   transition: opacity 0.16s var(--ease);
 }
 .brand:hover { color: var(--text); opacity: 0.82; }
-.brand-mark { display: grid; grid-template-columns: repeat(2, 1fr); gap: 2px; }
-.brand-mark i { width: 6px; height: 6px; background: var(--accent); border-radius: 1px; display: block; transition: transform 0.3s var(--ease); }
-.brand-mark i:nth-child(2) { background: var(--blue); }
-.brand-mark i:nth-child(3) { background: var(--amber); }
-.brand-mark i:nth-child(4) { background: var(--accent); opacity: 0.45; }
-.brand:hover .brand-mark i:nth-child(1) { transform: translateY(-1px); }
-.brand:hover .brand-mark i:nth-child(4) { transform: translateY(1px); }
+.brand-logo {
+  width: 22px; height: 22px; display: block; flex: 0 0 auto;
+  image-rendering: pixelated;
+  transition: transform 0.3s var(--ease);
+}
+.brand:hover .brand-logo { transform: translateY(-1px) scale(1.05); }
 
 nav.main { display: flex; gap: 3px; flex: 1; overflow-x: auto; scrollbar-width: none; padding: 4px 0; }
 nav.main::-webkit-scrollbar { display: none; }
@@ -607,11 +605,10 @@ input[type="checkbox"] { accent-color: var(--accent-dim); }
 .cert-inner::before { top: 0.5em; left: 0.5em; border-right: none; border-bottom: none; }
 .cert-inner::after { bottom: 0.5em; right: 0.5em; border-left: none; border-top: none; }
 .cert-head { display: flex; align-items: center; justify-content: space-between; }
-.cert-mark { display: grid; grid-template-columns: repeat(2, 1fr); gap: 0.18em; }
-.cert-mark i { width: 0.62em; height: 0.62em; display: block; background: #2f7d5f; }
-.cert-mark i:nth-child(2) { background: #5a86b8; }
-.cert-mark i:nth-child(3) { background: #c08a2e; }
-.cert-mark i:nth-child(4) { background: #2f7d5f; opacity: 0.45; }
+.cert-logo {
+  width: 1.7em; height: 1.7em; display: block; flex: 0 0 auto;
+  image-rendering: pixelated; opacity: 0.95;
+}
 .cert-org { font-size: 0.95em; letter-spacing: 0.35em; color: #6b6455; text-align: right; }
 .cert-org span { display: block; font-size: 0.72em; letter-spacing: 0.32em; color: #a39a86; margin-top: 0.2em; }
 .cert-kind { margin-top: 1.9em; font-size: 2.35em; letter-spacing: 0.34em; font-weight: 600; color: #22201c; }

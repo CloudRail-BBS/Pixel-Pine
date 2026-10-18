@@ -47,7 +47,7 @@ function certDocument(c, issuer) {
 
         <div class="cert-head">
           <div class="cert-brand">
-            <span class="cert-mark"><i></i><i></i><i></i><i></i></span>
+            <img class="cert-logo" src="assets/logo.svg" alt="" />
             <span class="cert-brand-text">像素松<small>PIXELSONG</small></span>
           </div>
           <div class="cert-head-right">
@@ -271,7 +271,7 @@ function receiptDoc({ kind, serial, holder, lines, note, seal }) {
     <div class="cert-page" id="cert-print">
       <div class="cert-inner">
         <div class="cert-head">
-          <div class="cert-mark"><i></i><i></i><i></i><i></i></div>
+          <img class="cert-logo" src="assets/logo.svg" alt="" />
           <div class="cert-org">像 素 松<span>PIXELSONG</span></div>
         </div>
 

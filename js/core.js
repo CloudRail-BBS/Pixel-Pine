@@ -346,7 +346,7 @@ export function shell(content, opts = {}) {
   <header class="top">
     <div class="top-inner">
       <a class="brand" href="#/home">
-        <span class="brand-mark"><i></i><i></i><i></i><i></i></span>
+        <img class="brand-logo" src="assets/logo.svg" alt="" width="22" height="22" />
         像素松
       </a>
       <nav class="main">
