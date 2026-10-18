@@ -1079,3 +1079,62 @@ a.org-card:hover .org-out { opacity: 1; }
 }
 .rg-check input { margin-top: 3px; }
 .rg-check input:disabled + span { opacity: 0.55; }
+
+/* ---------- 证书：水印与附加元素 ---------- */
+.cert-page--formal .cert-head,
+.cert-page--formal .cert-body,
+.cert-page--formal .cert-foot,
+.cert-page--formal .cert-close,
+.cert-page--formal .cert-note,
+.cert-page--formal .cert-colophon,
+.cert-page--formal .cert-microtext { position: relative; z-index: 1; }
+
+/* 页眉分隔线 */
+.cert-head-rule {
+  position: relative; z-index: 1;
+  height: 1px; margin: 1.15em 0 0;
+  background: linear-gradient(90deg,
+    transparent, var(--cert-line) 10%, var(--cert-line) 90%, transparent);
+}
+.cert-head-rule::after {
+  content: ""; position: absolute; left: 50%; top: -0.19em;
+  width: 0.36em; height: 0.36em; margin-left: -0.18em;
+  background: #faf6ea; border: 1px solid var(--cert-line);
+  transform: rotate(45deg);
+}
+
+/* 左缘竖排书脊字 */
+.cert-spine {
+  position: absolute; left: 0.9em; top: 50%; z-index: 0;
+  transform: translateY(-50%);
+  writing-mode: vertical-rl; text-orientation: mixed;
+  font-family: var(--mono); font-size: 0.44em; letter-spacing: 0.42em;
+  color: #9c8f73; opacity: 0.62;
+  pointer-events: none; white-space: nowrap;
+}
+
+/* 主题与赛期 */
+.cert-meta {
+  display: flex; align-items: center; justify-content: center; gap: 0.9em;
+  margin: -0.15em 0 1em;
+  font-family: var(--mono); font-size: 0.63em; letter-spacing: 0.2em;
+  color: #9d9179;
+}
+.cert-meta i {
+  width: 0.28em; height: 0.28em; background: #b3a68a;
+  transform: rotate(45deg); flex: 0 0 auto;
+}
+
+/* 协办署名 */
+.cert-colophon {
+  margin: 0.5em 0 0; text-align: center;
+  font-size: 0.62em; letter-spacing: 0.14em; color: #a2977f;
+}
+
+/* 微缩防伪文字 */
+.cert-microtext {
+  margin-top: 0.85em;
+  font-family: var(--mono); font-size: 0.38em; letter-spacing: 0.3em;
+  line-height: 1; color: #b3a88f; opacity: 0.85;
+  white-space: nowrap; overflow: hidden; text-align: center;
+}

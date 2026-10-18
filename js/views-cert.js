@@ -23,13 +23,24 @@ function sealMark(year) {
   </div>`;
 }
 
-function certDocument(c, issuer) {
+/** 赛事周期：2026.11.06 — 11.09 */
+function fmtPeriod(a) {
+  const s = a && a.eventStart ? new Date(a.eventStart) : null;
+  const e = a && a.submitDeadline ? new Date(a.submitDeadline) : null;
+  if (!s || isNaN(s) || !e || isNaN(e)) return "";
+  const p = (n) => String(n).padStart(2, "0");
+  const md = (d) => `${p(d.getMonth() + 1)}.${p(d.getDate())}`;
+  return `${s.getFullYear()}.${md(s)} — ${md(e)}`;
+}
+
+function certDocument(c, issuer, meta = {}) {
   const track = trackOf(c.track);
   const award = isAward(c);
   const year = (() => {
     const d = new Date(c.issued_at);
     return isNaN(d) ? "" : String(d.getFullYear());
   })();
+  const micro = `${"PIXELSONG · 像素松 ".repeat(14)}${c.cert_code}`;
 
   return `
   <div class="cert-shell">
@@ -43,6 +54,7 @@ function certDocument(c, issuer) {
 
     <div class="cert-page cert-page--formal ${award ? "is-award" : "is-part"}" id="cert-print">
       <div class="cert-inner">
+        <div class="cert-spine" aria-hidden="true">PIXELSONG · 像素松 · ${esc(year)}</div>
         <div class="cert-corners"><i></i><i></i><i></i><i></i></div>
 
         <div class="cert-head">
@@ -55,9 +67,19 @@ function certDocument(c, issuer) {
             <div class="cert-code">${esc(c.cert_code)}</div>
           </div>
         </div>
+        <div class="cert-head-rule" aria-hidden="true"></div>
 
         <div class="cert-body">
           <div class="cert-eyebrow">${esc(track.game || "")} · ${esc(track.type || "")}</div>
+          ${
+            meta.theme || meta.period
+              ? `<div class="cert-meta">
+                   ${meta.theme ? `<span>本届主题 · ${esc(meta.theme)}</span>` : ""}
+                   ${meta.theme && meta.period ? `<i></i>` : ""}
+                   ${meta.period ? `<span>${esc(meta.period)}</span>` : ""}
+                 </div>`
+              : ""
+          }
           <h1 class="cert-kind">${award ? "获奖证书" : "参赛证书"}</h1>
           ${
             award
@@ -98,7 +120,7 @@ function certDocument(c, issuer) {
           </div>
 
           <div class="cert-sign">
-            <div class="cert-issuer">${esc(issuer)}</div>
+            <div class="cert-issuer">${esc(issuer.name)}</div>
             ${sealMark(year)}
           </div>
 
@@ -109,19 +131,29 @@ function certDocument(c, issuer) {
         </div>
 
         <p class="cert-note">本证书可在像素松平台「证书核验」页输入编号验证真伪</p>
+        ${
+          issuer.co && issuer.co.length
+            ? `<p class="cert-colophon">协办单位　${esc(issuer.co.join("　"))}</p>`
+            : ""
+        }
+        <div class="cert-microtext" aria-hidden="true">${esc(micro)}</div>
       </div>
     </div>
   </div>`;
 }
 
-/** 落款取主办单位名称；没配就退回默认值 */
-async function issuerName() {
+/** 落款取主办单位；协办单位一并取出，用于页脚署名 */
+async function issuerInfo() {
   try {
     const list = await listPartners();
     const host = list.find((p) => p.role === "host") || list[0];
-    return host?.name || "像素松组委会";
+    return {
+      name: host?.name || "像素松组委会",
+      host: host?.name || "像素松组委会",
+      co: list.filter((p) => p.role === "co").map((p) => p.name),
+    };
   } catch (_) {
-    return "像素松组委会";
+    return { name: "像素松组委会", host: "像素松组委会", co: [] };
   }
 }
 
@@ -196,7 +228,9 @@ export async function certDetailView(el, path) {
     return;
   }
 
-  el.innerHTML = certDocument(cert, await issuerName());
+  const a = state.activity || {};
+  const meta = { theme: a.theme || "", period: fmtPeriod(a) };
+  el.innerHTML = certDocument(cert, await issuerInfo(), meta);
   const btn = el.querySelector("#btn-print");
   if (btn) btn.onclick = () => window.print();
 }
