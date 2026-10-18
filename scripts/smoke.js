@@ -57,6 +57,13 @@ const get = (p) => fetch(BASE + p, { redirect: "manual" });
     return { ok: typeof j.enabled === "boolean", detail: j.enabled ? "已启用" : "未配置（跳过机验）" };
   });
 
+  await probe("病毒扫描接口", async () => {
+    const r = await get("/api/scan?hash=" + "0".repeat(64));
+    const j = await r.json();
+    const ok = j.ok === true && typeof j.enabled === "boolean";
+    return { ok, detail: j.enabled ? `已启用（${j.status || "查询中"}）` : "未配置（显示未启用）" };
+  });
+
   await probe("源码 server.js 不可下载", async () => {
     const r = await get("/server.js");
     return { ok: r.status === 404, detail: String(r.status) };

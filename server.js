@@ -40,6 +40,43 @@ const CNKD_SCOPE = "profile.basic profile.status";
 const CNKD_PENDING_TTL = 10 * 60 * 1000;
 const CNKD_TICKET_TTL = 5 * 60 * 1000;
 
+const VT_KEY = process.env.VT_API_KEY || "";
+const VT_TTL = 30 * 60 * 1000;
+const vtCache = new Map();
+
+async function vtLookup(hash) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 8000);
+  try {
+    const resp = await fetch(`https://www.virustotal.com/api/v3/files/${hash}`, {
+      headers: { "x-apikey": VT_KEY },
+      signal: controller.signal,
+    });
+    if (resp.status === 404) return { status: "notfound" };
+    if (resp.status === 401 || resp.status === 403) return { status: "unauthorized" };
+    if (resp.status === 429) return { status: "ratelimited" };
+    const json = await resp.json().catch(() => ({}));
+    const a = json && json.data && json.data.attributes;
+    if (!a) return { status: "unknown" };
+    const s = a.last_analysis_stats || {};
+    const malicious = s.malicious || 0;
+    const suspicious = s.suspicious || 0;
+    const harmless = s.harmless || 0;
+    const undetected = s.undetected || 0;
+    return {
+      status: malicious > 0 ? "malicious" : suspicious > 0 ? "suspicious" : "clean",
+      stats: { malicious, suspicious, harmless, undetected, total: malicious + suspicious + harmless + undetected },
+      type: a.type_description || null,
+      size: a.size || null,
+      lastAnalysis: a.last_analysis_date ? new Date(a.last_analysis_date * 1000).toISOString() : null,
+    };
+  } catch (_) {
+    return { status: "unavailable" };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 let APP_VERSION = "unknown";
 try {
   APP_VERSION = JSON.parse(fs.readFileSync(path.join(ROOT, "package.json"), "utf8")).version || "unknown";
@@ -294,6 +331,9 @@ const server = http.createServer(async (req, res) => {
         enabled: Boolean(CNKD_CLIENT_ID),
         mode: CNKD_CLIENT_SECRET ? "confidential" : "public",
       },
+      scan: {
+        enabled: Boolean(VT_KEY),
+      },
       checks: {
         nodeFetch: typeof fetch === "function",
         envFile: fs.existsSync(path.join(ROOT, ".env")),
@@ -329,6 +369,19 @@ const server = http.createServer(async (req, res) => {
     }
     const result = await validateGeetest(payload);
     return sendJson(res, 200, result);
+  }
+
+  if (url.pathname === "/api/scan") {
+    if (!VT_KEY) return sendJson(res, 200, { ok: true, enabled: false });
+    const hash = (url.searchParams.get("hash") || "").toLowerCase();
+    if (!/^[a-f0-9]{64}$/.test(hash)) return sendJson(res, 400, { ok: false, reason: "bad_hash" });
+    const hit = vtCache.get(hash);
+    if (hit && Date.now() - hit.at < VT_TTL) {
+      return sendJson(res, 200, { ok: true, enabled: true, cached: true, ...hit.v });
+    }
+    const result = await vtLookup(hash);
+    vtCache.set(hash, { at: Date.now(), v: result });
+    return sendJson(res, 200, { ok: true, enabled: true, ...result });
   }
 
   if (url.pathname === "/api/cnkd/config") {

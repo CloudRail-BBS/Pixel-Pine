@@ -59,6 +59,7 @@ function registerRoutes() {
   route("/certificate", lazyView(cert, "certListView"));
   route("/certificate/*", lazyView(cert, "certDetailView"));
   route("/verify", lazyView(cert, "verifyView"));
+  route("/receipt/*", lazyView(cert, "receiptView"));
   route("/judge", lazyView(work, "judgeView"));
   route("/admin", lazyView(admin, "adminView"));
   route("/admin/*", lazyView(admin, "adminView"));

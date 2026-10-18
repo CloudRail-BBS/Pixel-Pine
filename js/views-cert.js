@@ -1,5 +1,5 @@
-import { state, shell, bindShell, toast, esc, fmtDate, fmtFull, requireLogin, busy, errMsg } from "./core.js";
-import { getCertificateByCode, listMyCertificates } from "./api.js";
+import { state, shell, bindShell, toast, esc, fmtDate, fmtFull, requireLogin, busy, errMsg, db } from "./core.js";
+import { getCertificateByCode, listMyCertificates, listVersions, getMySignature } from "./api.js";
 import { trackOf } from "./config.js";
 
 const isAward = (c) => c.award_key !== "participant";
@@ -198,4 +198,121 @@ export async function verifyView(el, path) {
   el.querySelector("#v-code").onkeydown = (e) => {
     if (e.key === "Enter") go();
   };
+}
+
+/* ---------------------------- 提交 / 签署凭证 ---------------------------- */
+
+function receiptDoc({ kind, serial, holder, lines, note, seal }) {
+  return `
+  <div class="cert-shell">
+    <div class="cert-toolbar no-print">
+      <a class="btn btn-sm" href="#" id="btn-back">← 返回</a>
+      <button class="btn btn-sm btn-primary" id="btn-print">打印 / 导出 PDF</button>
+    </div>
+    <div class="cert-page" id="cert-print">
+      <div class="cert-inner">
+        <div class="cert-head">
+          <div class="cert-mark"><i></i><i></i><i></i><i></i></div>
+          <div class="cert-org">像 素 松<span>PIXELSONG</span></div>
+        </div>
+
+        <div class="cert-kind">${esc(kind)}</div>
+        <div class="cert-rule"></div>
+
+        <p class="cert-lead">兹证明</p>
+        <div class="cert-name">${esc(holder)}</div>
+
+        <div class="cert-lines">
+          ${lines.map(([k, v, mono]) => `<div class="cert-line-item"><span>${esc(k)}</span><b class="${mono ? "mono" : ""}">${esc(v)}</b></div>`).join("")}
+        </div>
+
+        <div class="cert-foot">
+          <div class="cert-field">
+            <span>凭证编号</span>
+            <b>${esc(serial)}</b>
+          </div>
+          <div class="cert-seal"><div class="seal-ring">像<br />素<br />松</div></div>
+          <div class="cert-field right">
+            <span>${esc(seal || "")}</span>
+          </div>
+        </div>
+
+        <p class="cert-note">${esc(note || "")}</p>
+      </div>
+    </div>
+  </div>`;
+}
+
+export async function receiptView(el, path) {
+  const seg = (path || "").split("/");
+  const kind = seg[2] || "";
+
+  if (kind === "integrity") {
+    const sig = await getMySignature().catch(() => null);
+    if (!sig) {
+      el.innerHTML = shell(`<div class="empty" style="max-width:520px;margin:60px auto">
+        <p style="margin-bottom:6px">还没有签署记录</p>
+        <a class="btn btn-sm" href="#/integrity" style="margin-top:12px">去签署公约</a>
+      </div>`);
+      bindShell();
+      return;
+    }
+    el.innerHTML = receiptDoc({
+      kind: "公 约 签 署 凭 证",
+      serial: `PS-SIG-${String(sig.id).padStart(5, "0")}`,
+      holder: sig.agreed_name,
+      lines: [
+        ["签署事项", "《诚信比赛公约》"],
+        ["公约版本", sig.doc_version, true],
+        ["签署时间", fmtFull(sig.created_at)],
+        ["文本哈希", (sig.doc_hash || "").slice(0, 32) + "…", true],
+      ],
+      seal: fmtFull(sig.created_at).slice(0, 10),
+      note: "文本哈希对应签署瞬间的公约全文，可重新计算结果比对，用于确认所签版本未被篡改。",
+    });
+    bindReceipt(el);
+    return;
+  }
+
+  if (kind === "submission") {
+    const id = Number(seg[3]);
+    const sub = await db.from("submissions").select("*").eq("id", id).maybeSingle().then((r) => r.data).catch(() => null);
+    if (!sub) {
+      el.innerHTML = shell(`<div class="empty" style="max-width:520px;margin:60px auto">
+        <p style="margin-bottom:6px">没有找到该作品的提交记录</p>
+        <a class="btn btn-sm" href="#/work" style="margin-top:12px">返回作品页</a>
+      </div>`);
+      bindShell();
+      return;
+    }
+    const vers = await listVersions(sub.id).catch(() => []);
+    const v = vers[0];
+    el.innerHTML = receiptDoc({
+      kind: "作 品 提 交 凭 证",
+      serial: `PS-SUB-${String(sub.id).padStart(4, "0")}-V${sub.version_no - 1 || 1}`,
+      holder: sub.owner_name || "参赛队伍",
+      lines: [
+        ["作品名称", sub.title],
+        ["赛道", `赛道 ${sub.track} · ${trackOf(sub.track).name}`],
+        ["提交版本", `v${v ? v.version_no : sub.version_no}`, true],
+        ["作品包 SHA-256", (sub.pkg_sha256 || "—").slice(0, 32) + "…", true],
+        ["包体大小", sub.pkg_size || "—"],
+        ["提交时间", v ? fmtFull(v.created_at) : fmtFull(sub.updated_at)],
+      ],
+      seal: fmtFull(v ? v.created_at : sub.updated_at).slice(0, 10),
+      note: "凭证内容取自提交时生成的不可变版本快照。作品包哈希可用于核对文件是否被替换。",
+    });
+    bindReceipt(el);
+    return;
+  }
+
+  el.innerHTML = shell(`<div class="empty">未知凭证类型</div>`);
+  bindShell();
+}
+
+function bindReceipt(el) {
+  const back = el.querySelector("#btn-back");
+  if (back) back.onclick = (e) => { e.preventDefault(); history.back(); };
+  const p = el.querySelector("#btn-print");
+  if (p) p.onclick = () => window.print();
 }

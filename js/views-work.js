@@ -4,6 +4,9 @@ import {
 } from "./core.js";
 import { TRACKS, trackOf, DIMENSIONS, PRESENT_RUBRIC, STATUS_TEXT, TEAM_STATUS, INTEGRITY_DOC, integrityPlainText } from "./config.js";
 import {
+  MAX_UPLOAD_MB, fmtSize, sha256File, scanHash, uploadWorkFile, publishWorkFile, signedDownload,
+} from "./upload.js";
+import {
   myMembership, getTeam, listMembers, createTeam, joinTeam, leaveTeam, removeMember,
   setTeamStatus, listTeams, mySubmissions, myPrimarySubmission, saveDraft, submitVersion,
   listVersions, allSubmissions, setCompatibility, publishResults, listJudges, assignReviews,
@@ -353,6 +356,29 @@ export async function workView(el) {
   const d = sub?.detail || {};
   const l = sub?.links || {};
 
+  let currentFile = sub?.file_path
+    ? { path: sub.file_path, name: sub.file_name, size: sub.file_size, sha: sub.pkg_sha256 }
+    : null;
+  let lastScan = sub?.scan || null;
+
+  const scanBadge = (sc) => {
+    if (!sc) return "";
+    if (sc.enabled === false) return '<span class="tag tag-amber">扫描未启用</span>';
+    const map = {
+      clean: ["tag-teal", "未检出威胁"],
+      malicious: ["tag-red", "检出恶意"],
+      suspicious: ["tag-amber", "有可疑项"],
+      notfound: ["tag", "未被收录"],
+      ratelimited: ["tag-amber", "查询受限"],
+      unavailable: ["tag", "查询失败"],
+      unauthorized: ["tag-red", "密钥无效"],
+      unknown: ["tag", "结果未知"],
+    };
+    const [cls, label] = map[sc.status] || ["tag", "未知"];
+    const stat = sc.stats ? ` · ${sc.stats.malicious}/${sc.stats.total}` : "";
+    return `<span class="tag ${cls}">${label}${stat}</span>`;
+  };
+
   const banner = () => {
     if (!sub) return `<div class="card" style="border-color:rgba(133,183,235,.3);margin-bottom:18px"><p class="small" style="margin:0">还没有提交任何版本。先保存草稿，确认无误后点"提交本版本"生成快照。</p></div>`;
     if (sub.status === "fix_required") {
@@ -407,34 +433,59 @@ export async function workView(el) {
     </div>
 
     <div class="card block">
-      <div class="card-head"><h2>作品包与链接</h2><span class="card-note">本站只收链接，不上传文件</span></div>
+      <div class="card-head"><h2>作品包</h2><span class="card-note">≤ ${MAX_UPLOAD_MB} MB · 截止前仅本队可见</span></div>
+
+      ${
+        sub?.file_path
+          ? `<div class="file-row">
+              <div style="min-width:0">
+                <div class="strong">${esc(sub.file_name || "作品包")}</div>
+                <div class="tiny dim mono" style="word-break:break-all">${esc(sub.pkg_sha256 || "")}</div>
+              </div>
+              <div class="row" style="gap:8px">
+                <span class="tag">${esc(fmtSize(sub.file_size))}</span>
+                ${sub.shared_path ? '<span class="tag tag-teal">已发布评审</span>' : ""}
+                ${membership.is_leader ? `<button class="btn btn-sm" id="btn-dl-file">下载</button>` : ""}
+              </div>
+            </div>`
+          : ""
+      }
+
+      ${
+        membership.is_leader
+          ? `<div class="field">
+              <label class="req">${sub?.file_path ? "重新上传（将替换当前文件）" : "选择作品包"}</label>
+              <input type="file" id="s-file" />
+              <div class="hint">支持 .jar / .zip / .mcworld / .rwmod 等。上传后自动计算 SHA-256 并查询病毒扫描结果。</div>
+            </div>`
+          : `<p class="tiny dim" style="margin-bottom:12px">作品包由队长上传与发布。文件存放在上传者自己的存储空间，换人上传会导致之前发布的链接失效。</p>`
+      }
+      <div id="file-status" class="tiny" style="margin-bottom:12px"></div>
+
       <div class="grid grid-2">
-        <div class="field"><label class="req">作品包下载链接</label>
-          <input type="url" id="s-pkg" value="${esc(l.pkg || "")}" placeholder="https://pan.baidu.com/s/..." /></div>
-        <div class="field"><label>提取码 / 密码</label>
-          <input type="text" id="s-pwd" value="${esc(l.pwd || "")}" placeholder="如有" /></div>
-      </div>
-      <div class="grid grid-3">
-        <div class="field"><label class="req">包体 SHA-256</label>
-          <input type="text" id="s-sha" value="${esc(sub?.pkg_sha256 || "")}" placeholder="64 位十六进制" class="mono" />
-          <div class="hint">用于防替换核对，可用 <span class="mono">certutil -hashfile 包名 SHA256</span> 计算</div></div>
-        <div class="field"><label>包体大小</label>
-          <input type="text" id="s-size" value="${esc(sub?.pkg_size || "")}" placeholder="例：42.6 MB" /></div>
         <div class="field"><label>演示视频链接</label>
-          <input type="url" id="s-video" value="${esc(l.video || "")}" placeholder="3–5 分钟，含安装到游玩" /></div>
-      </div>
-      <div class="grid grid-2">
+          <input type="url" id="s-video" value="${esc(l.video || "")}" placeholder="3–5 分钟，含安装到游玩（视频体积大，仍用链接）" /></div>
         <div class="field"><label>源码 / 仓库链接</label>
           <input type="url" id="s-repo" value="${esc(l.repo || "")}" placeholder="赛道 A、C 必填" /></div>
-        <div class="field"><label>依赖与许可证</label>
-          <textarea id="s-license" placeholder="名称 / 版本 / 来源链接 / 许可证，一行一项">${esc(d.license || "")}</textarea></div>
       </div>
       <div class="grid grid-2">
         <div class="field"><label class="req">安装说明</label>
           <textarea id="s-install" placeholder="从零开始，别人照着做能装上">${esc(d.install || "")}</textarea></div>
-        <div class="field"><label>已知问题</label>
-          <textarea id="s-known" placeholder="哪些情况会崩、哪些没做完">${esc(d.known || "")}</textarea></div>
+        <div class="field"><label>依赖与许可证</label>
+          <textarea id="s-license" placeholder="名称 / 版本 / 来源链接 / 许可证，一行一项">${esc(d.license || "")}</textarea></div>
       </div>
+      <div class="field"><label>已知问题</label>
+        <textarea id="s-known" placeholder="哪些情况会崩、哪些没做完">${esc(d.known || "")}</textarea></div>
+
+      ${
+        sub?.file_path && !sub.shared_path && !editable && membership.is_leader
+          ? `<div class="divider"></div>
+             <div class="row-between" style="gap:12px">
+               <p class="tiny dim" style="margin:0;max-width:420px">提交已截止。点击右侧把作品包发布到评审区，评委才能下载。发布后其他参赛者也可下载。</p>
+               <button class="btn btn-primary btn-sm nowrap" id="btn-publish-file">发布到评审</button>
+             </div>`
+          : ""
+      }
     </div>
 
     <div class="row row-wrap block" style="gap:10px">
@@ -451,13 +502,14 @@ export async function workView(el) {
     <div class="card">
       <div class="card-head"><h2>版本记录</h2><span class="card-note">${versions.length} 个快照 · 不可修改</span></div>
       ${versions.length ? `<div class="tbl-wrap"><table class="tbl">
-        <thead><tr><th>版本</th><th>提交时间</th><th>SHA-256</th><th>大小</th><th>说明</th></tr></thead>
+        <thead><tr><th>版本</th><th>提交时间</th><th>SHA-256</th><th>大小</th><th>说明</th><th class="right">凭证</th></tr></thead>
         <tbody>${versions.map((v) => `<tr>
           <td class="mono">v${v.version_no}</td>
           <td class="mono tiny">${esc(fmtFull(v.created_at))}</td>
           <td class="mono tiny dim">${v.sha256 ? esc(v.sha256.slice(0, 16)) + "…" : "—"}</td>
           <td class="tiny">${esc(v.pkg_size || "—")}</td>
           <td class="tiny muted">${esc(v.note || "—")}</td>
+          <td class="right"><a class="btn btn-sm" href="#/receipt/submission/${v.submission_id}">查看</a></td>
         </tr>`).join("")}</tbody>
       </table></div>` : '<p class="small dim" style="margin:0">已保存草稿，但没有提交过快照。</p>'}
     </div>` : ""}
@@ -477,19 +529,100 @@ export async function workView(el) {
         known: val(el, "#s-known"),
         license: val(el, "#s-license"),
       },
-      links: {
-        pkg: val(el, "#s-pkg"),
-        pwd: val(el, "#s-pwd"),
-        video: val(el, "#s-video"),
-        repo: val(el, "#s-repo"),
-      },
-      pkg_sha256: val(el, "#s-sha").toLowerCase(),
-      pkg_size: val(el, "#s-size"),
+      links: { video: val(el, "#s-video"), repo: val(el, "#s-repo") },
+      file_path: currentFile?.path || null,
+      file_name: currentFile?.name || null,
+      file_size: currentFile?.size || null,
+      pkg_sha256: currentFile?.sha || null,
+      pkg_size: currentFile ? fmtSize(currentFile.size) : null,
+      scan: lastScan,
     };
     if (!payload.title) throw new Error("请填写作品名称");
     if (!payload.summary) throw new Error("请填写一句话简介");
     return payload;
   };
+
+  const renderFileStatus = () => {
+    const box = el.querySelector("#file-status");
+    if (!box) return;
+    if (!currentFile) {
+      box.innerHTML = '<span class="dim">尚未上传作品包</span>';
+      return;
+    }
+    box.innerHTML = `<div class="row row-wrap" style="gap:8px;align-items:center">
+      <span class="tag tag-teal">已就绪</span>
+      <span class="tiny dim">${esc(fmtSize(currentFile.size))}</span>
+      ${scanBadge(lastScan)}
+      <span class="mono tiny dim" style="word-break:break-all">${esc(currentFile.sha || "")}</span>
+    </div>`;
+  };
+  renderFileStatus();
+
+  const fileInput = el.querySelector("#s-file");
+  if (fileInput) {
+    fileInput.onchange = async () => {
+      const f = fileInput.files && fileInput.files[0];
+      if (!f) return;
+      const box = el.querySelector("#file-status");
+      try {
+        box.innerHTML = '<span class="dim">正在计算 SHA-256…</span>';
+        const sha = await sha256File(f);
+        box.innerHTML = '<span class="dim">正在上传，请勿关闭页面…</span>';
+        const up = await uploadWorkFile(f, sub?.id || "draft");
+        currentFile = { path: up.path, name: up.name, size: up.size, sha };
+        box.innerHTML = '<span class="dim">正在查询病毒扫描…</span>';
+        try {
+          const sc = await scanHash(sha);
+          lastScan = { ...sc, at: new Date().toISOString() };
+        } catch (_) {
+          lastScan = null;
+        }
+        renderFileStatus();
+        if (lastScan && lastScan.status === "malicious") {
+          toast("扫描检出恶意内容，请更换文件", "err");
+        } else {
+          toast("上传完成，记得保存或提交", "ok");
+        }
+      } catch (e) {
+        box.innerHTML = `<span style="color:var(--red)">${esc(errMsg(e))}</span>`;
+        fileInput.value = "";
+      }
+    };
+  }
+
+  const dlBtn = el.querySelector("#btn-dl-file");
+  if (dlBtn) {
+    dlBtn.onclick = async () => {
+      busy(dlBtn, true, "生成中…");
+      try {
+        const url = await signedDownload(sub.file_path);
+        if (!url) throw new Error("无法生成下载链接");
+        window.open(url, "_blank", "noopener");
+      } catch (e) {
+        toast(errMsg(e), "err");
+      } finally {
+        busy(dlBtn, false);
+      }
+    };
+  }
+
+  const pubBtn = el.querySelector("#btn-publish-file");
+  if (pubBtn) {
+    pubBtn.onclick = async () => {
+      if (!(await confirmBox("发布到评审", "作品包将复制到评审区，评委与所有登录用户都可下载。确定吗？", "发布"))) return;
+      busy(pubBtn, true, "发布中…");
+      try {
+        const target = await publishWorkFile(sub.file_path, sub.id);
+        const rows = unwrap(await db.from("submissions").update({ shared_path: target }).eq("id", sub.id).select());
+        if (!rows || !rows.length) throw new Error("发布失败：没有权限更新该作品");
+        toast("已发布到评审", "ok");
+        workView(el);
+      } catch (e) {
+        toast(errMsg(e), "err");
+        busy(pubBtn, false);
+      }
+    };
+  }
 
   el.querySelector("#btn-draft").onclick = async (e) => {
     const btn = e.currentTarget;
@@ -504,8 +637,10 @@ export async function workView(el) {
   el.querySelector("#btn-submit").onclick = async (e) => {
     let payload;
     try { payload = collect(); } catch (err) { return toast(err.message, "err"); }
-    if (!payload.links.pkg) return toast("请填写作品包下载链接", "err");
-    if (!payload.pkg_sha256 || !/^[a-f0-9]{64}$/.test(payload.pkg_sha256)) return toast("请填写正确的 64 位 SHA-256", "err");
+    if (!payload.file_path) return toast("请先上传作品包", "err");
+    if (lastScan && lastScan.enabled && lastScan.status === "malicious") {
+      return toast("病毒扫描检出恶意内容，无法提交", "err");
+    }
     if (!(await confirmBox("提交确认", `提交后将生成不可修改的快照 v${(sub?.version_no) || 1}，截止前可再次提交覆盖。确定提交吗？`, "提交"))) return;
     const btn = e.currentTarget;
     busy(btn, true, "提交中…");
@@ -586,10 +721,13 @@ function openScoreModal(reviewId, reviews, byId, refresh) {
       <p class="tiny" style="margin:0 0 6px"><span class="dim">安装：</span>${esc(d.install || "—")}</p>
       <p class="tiny" style="margin:0"><span class="dim">已知问题：</span>${esc(d.known || "—")}</p>
       <div class="row row-wrap" style="gap:6px;margin-top:10px">
-        ${l.pkg ? `<a class="tag tag-teal" href="${esc(l.pkg)}" target="_blank" rel="noopener">作品包</a>` : ""}
+        ${s.shared_path
+          ? `<button class="tag tag-teal" id="judge-dl" type="button">下载作品包</button>`
+          : `<span class="tag tag-amber">作品包未发布</span>`}
         ${l.video ? `<a class="tag tag-blue" href="${esc(l.video)}" target="_blank" rel="noopener">演示视频</a>` : ""}
         ${l.repo ? `<a class="tag" href="${esc(l.repo)}" target="_blank" rel="noopener">源码</a>` : ""}
         ${s.pkg_sha256 ? `<span class="tag mono">${esc(s.pkg_sha256.slice(0, 10))}…</span>` : ""}
+        ${s.scan ? `<span class="tag ${s.scan.status === "malicious" ? "tag-red" : s.scan.status === "clean" ? "tag-teal" : ""}">扫描 ${esc(s.scan.stats ? s.scan.stats.malicious + "/" + s.scan.stats.total : s.scan.status)}</span>` : ""}
       </div>
     </div>
 
@@ -630,6 +768,24 @@ function openScoreModal(reviewId, reviews, byId, refresh) {
   };
   m.host.querySelectorAll("[data-dim]").forEach((i) => (i.oninput = recalc));
   recalc();
+
+  const jdl = m.host.querySelector("#judge-dl");
+  if (jdl) {
+    jdl.onclick = async () => {
+      jdl.disabled = true;
+      jdl.textContent = "生成中…";
+      try {
+        const url = await signedDownload(s.shared_path);
+        if (!url) throw new Error("无法生成下载链接");
+        window.open(url, "_blank", "noopener");
+      } catch (e) {
+        toast(errMsg(e), "err");
+      } finally {
+        jdl.disabled = false;
+        jdl.textContent = "下载作品包";
+      }
+    };
+  }
 
   m.host.querySelector('[data-x="cancel"]').onclick = () => m.close();
   m.host.querySelector('[data-x="draft"]').onclick = async (e) => {
@@ -708,6 +864,9 @@ export async function integrityView(el) {
                   <tr><td class="small muted">文本哈希</td><td class="mono tiny dim" style="word-break:break-all">${esc(sig.doc_hash)}</td></tr>
                 </tbody></table></div>
                 <p class="tiny dim" style="margin-top:10px">哈希对应你签署时的文本。若公约修订导致版本号变化，需要重新签署。</p>
+                <div class="row" style="margin-top:12px">
+                  <a class="btn btn-sm" href="#/receipt/integrity">打印签署凭证</a>
+                </div>
               </div>`
             : `<div class="card" style="border-color:rgba(239,159,39,.35);margin-bottom:20px">
                 <p class="small" style="margin:0;color:var(--amber)">你还没有签署本公约。全队成员各自签署后，队长才能提交作品。</p>

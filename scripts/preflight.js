@@ -111,6 +111,11 @@ check("CNKD 一证通行", () => {
   return { ok: true, detail: cnkdUri };
 }, "回调地址必须与 CNKD 平台登记值逐字一致");
 
+check("病毒扫描（VirusTotal）", () => {
+  const k = process.env.VT_API_KEY || "";
+  return { ok: true, detail: k ? "已配置" : "未配置（提交页显示未启用）" };
+}, "在 virustotal.com 申请免费 API key");
+
 const pad = (s, n) => s + " ".repeat(Math.max(0, n - [...s].reduce((a, c) => a + (c.charCodeAt(0) > 255 ? 2 : 1), 0)));
 
 console.log("\n像素松 · 部署前自检\n" + "─".repeat(52));

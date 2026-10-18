@@ -226,18 +226,24 @@ function worksTab(subs) {
     <div class="card">
       <div class="card-head"><h2>作品与兼容性</h2><span class="card-note">${subs.filter((s) => s.status === "submitted").length} 件待检查</span></div>
       ${subs.length ? `<div class="tbl-wrap"><table class="tbl">
-        <thead><tr><th>作品</th><th>赛道</th><th>版本</th><th>SHA-256</th><th>状态</th><th class="right">操作</th></tr></thead>
-        <tbody>${subs.map((s) => `<tr>
+        <thead><tr><th>作品</th><th>赛道</th><th>版本</th><th>作品包</th><th>扫描</th><th>状态</th><th class="right">操作</th></tr></thead>
+        <tbody>${subs.map((s) => {
+          const sc = s.scan || null;
+          const scMap = { clean: ["tag-teal", "通过"], malicious: ["tag-red", "恶意"], suspicious: ["tag-amber", "可疑"], notfound: ["tag", "未收录"] };
+          const [scls, slabel] = sc ? scMap[sc.status] || ["tag", sc.status] : ["tag", "未扫描"];
+          return `<tr>
           <td class="strong">${esc(s.title)}<div class="tiny dim">${esc(s.owner_name || "")}</div></td>
           <td><span class="tag">${esc(s.track)}</span></td>
           <td class="mono tiny">v${s.version_no}</td>
-          <td class="mono tiny dim">${s.pkg_sha256 ? esc(s.pkg_sha256.slice(0, 10)) + "…" : "—"}</td>
+          <td class="tiny">${s.file_path ? esc(s.file_name || "已上传") + `<div class="tiny dim">${s.shared_path ? "已发布" : "未发布"}</div>` : '<span class="dim">—</span>'}</td>
+          <td><span class="tag ${scls}">${esc(slabel)}${sc && sc.stats ? ` ${sc.stats.malicious}/${sc.stats.total}` : ""}</span></td>
           <td><span class="${(STATUS_TEXT[s.status] || {}).cls || "tag"}">${esc((STATUS_TEXT[s.status] || {}).label || s.status)}</span></td>
           <td class="right nowrap">
             <button class="btn btn-sm" data-vers="${s.id}">版本</button>
             <button class="btn btn-sm" data-check="${s.id}">兼容性</button>
           </td>
-        </tr>`).join("")}</tbody>
+        </tr>`;
+        }).join("")}</tbody>
       </table></div>` : '<div class="empty">暂无作品</div>'}
     </div>`;
 }
