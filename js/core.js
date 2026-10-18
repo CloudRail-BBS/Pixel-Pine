@@ -321,7 +321,8 @@ export function navItems() {
   const items = [
     ["/home", "首页"],
     ["/rules", "规则"],
-    ["/results", "作品与结果"],
+    ["/works", "参赛作品"],
+    ["/results", "结果"],
     ["/notices", "公告"],
   ];
   if (state.session) {
@@ -364,7 +365,7 @@ export function shell(content, opts = {}) {
   </header>
   <main class="${opts.wide ? "wide" : ""}">${content}</main>
   <nav class="mobile-nav">
-    ${items.slice(0, 6).map(([p, t]) => `<a href="#${p}" class="${isOn(p) ? "active" : ""}">${t}</a>`).join("")}
+    ${items.map(([p, t]) => `<a href="#${p}" class="${isOn(p) ? "active" : ""}">${t}</a>`).join("")}
   </nav>`;
 }
 

@@ -2,10 +2,14 @@ import {
   cloud, state, shell, bindShell, navigate, toast, esc, fmtDate, fmtFull, timeLeft, ago,
   loadMe, loadActivity, requireLogin, busy, errMsg, db, unwrap, renderDoc,
 } from "./core.js";
-import { TRACKS, trackOf, DIMENSIONS, DEFAULT_ACTIVITY } from "./config.js";
-import { allSubmissions, listAnnouncements, rankSubmissions, allReviews, trackCounts, awardPlan, getDocument } from "./api.js";
+import { TRACKS, trackOf, DIMENSIONS, DEFAULT_ACTIVITY, PARTNER_ROLES } from "./config.js";
+import {
+  allSubmissions, listAnnouncements, rankSubmissions, allReviews, trackCounts, awardPlan,
+  getDocument, listPartners, publicWorks, publicWork,
+} from "./api.js";
 import { verifyCaptcha } from "./geetest.js";
 import { cnkdConfig, startCnkdLogin, fetchCnkdTicket } from "./cnkd.js";
+import { signedDownload } from "./upload.js";
 
 let pendingOtp = null;
 
@@ -21,6 +25,10 @@ export async function homeView(el) {
   } catch (_) {}
   try {
     notices = (await listAnnouncements()).slice(0, 3);
+  } catch (_) {}
+  let partners = [];
+  try {
+    partners = await listPartners();
   } catch (_) {}
   if (state.session) {
     try {
@@ -130,8 +138,72 @@ export async function homeView(el) {
         </div>
       </div>
     </div>
+
+    ${partnerWall(partners, "组织单位", "主办、协办与支持")}
   `);
   bindShell();
+}
+
+/* ---------------------------- 组织单位 ---------------------------- */
+
+function orgMonogram(name) {
+  const s = String(name || "").trim();
+  if (!s) return "·";
+  if (/^[\x00-\x7F]+$/.test(s)) {
+    return s
+      .split(/\s+/)
+      .filter(Boolean)
+      .slice(0, 2)
+      .map((w) => w[0])
+      .join("")
+      .toUpperCase();
+  }
+  return s.slice(0, 2);
+}
+
+function partnerCard(p) {
+  const inner = `
+    <span class="org-logo">${
+      p.logo_url
+        ? `<img src="${esc(p.logo_url)}" alt="${esc(p.name)}" loading="lazy" />`
+        : `<b>${esc(orgMonogram(p.name))}</b>`
+    }</span>
+    <span class="org-meta">
+      <b>${esc(p.name)}</b>
+      ${p.note ? `<small>${esc(p.note)}</small>` : ""}
+    </span>`;
+  return p.site_url
+    ? `<a class="org-card" href="${esc(p.site_url)}" target="_blank" rel="noopener noreferrer">${inner}<i class="org-out">↗</i></a>`
+    : `<div class="org-card">${inner}</div>`;
+}
+
+function partnerWall(list, title, note) {
+  const rows = (list || []).slice().sort((a, b) => (a.sort || 100) - (b.sort || 100));
+  if (!rows.length) return "";
+  const groups = PARTNER_ROLES.map((r) => ({ ...r, items: rows.filter((p) => p.role === r.key) })).filter(
+    (g) => g.items.length
+  );
+  const rest = rows.filter((p) => !PARTNER_ROLES.some((r) => r.key === p.role));
+  if (rest.length) groups.push({ key: "other", name: "其他单位", note: "", items: rest });
+
+  return `
+    <div class="block" id="orgs">
+      <div class="block-head"><h2>${esc(title)}</h2><span class="card-note">${esc(note || "")}</span></div>
+      <div class="org-wall">
+        ${groups
+          .map(
+            (g) => `
+          <div class="org-group">
+            <div class="org-role">
+              <span class="org-role-name">${esc(g.name)}</span>
+              ${g.note ? `<span class="org-role-note">${esc(g.note)}</span>` : ""}
+            </div>
+            <div class="org-row">${g.items.map(partnerCard).join("")}</div>
+          </div>`
+          )
+          .join("")}
+      </div>
+    </div>`;
 }
 
 /* ---------------------------- 规则 ---------------------------- */
@@ -537,7 +609,7 @@ export async function resultsView(el) {
               ${g.rows.map((r) => `
                 <div class="card">
                   <div class="row-between" style="margin-bottom:8px">
-                    <span class="strong" style="font-size:15px">${esc(r.sub.title)}</span>
+                    <a class="strong" style="font-size:15px" href="#/works/${r.sub.id}">${esc(r.sub.title)}</a>
                     ${r.judgeCount ? `<span class="tag ${r.qualified ? "tag-teal" : "tag-red"}">${r.avg} 分</span>` : ""}
                   </div>
                   <p class="small muted" style="margin-bottom:12px">${esc(r.sub.summary || "")}</p>
@@ -551,6 +623,285 @@ export async function resultsView(el) {
     }
   `);
   bindShell();
+}
+
+/* ---------------------------- 参赛作品 ---------------------------- */
+
+/** 由作品标题生成一张确定性的像素色块，用作卡片封面 */
+function pixelBanner(seed) {
+  const s = String(seed);
+  let h = 2166136261;
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  const cells = [];
+  for (let i = 0; i < 60; i++) {
+    h = Math.imul(h ^ (h >>> 13), 1274126177);
+    const v = (h >>> 0) % 100;
+    if (v < 44) {
+      cells.push(
+        `<rect x="${i % 12}" y="${Math.floor(i / 12)}" width="1" height="1" opacity="${(
+          0.14 + (v % 34) / 100
+        ).toFixed(2)}" />`
+      );
+    }
+  }
+  return `<svg class="work-pixels" viewBox="0 0 12 5" preserveAspectRatio="none" aria-hidden="true">${cells.join(
+    ""
+  )}</svg>`;
+}
+
+const workDate = (w) => fmtDate(w.created_at);
+
+export async function worksView(el, path) {
+  const qp = new URLSearchParams((path || "").split("?")[1] || "");
+  const track = (qp.get("track") || "").toUpperCase();
+
+  let all = [];
+  try {
+    all = await publicWorks();
+  } catch (_) {}
+
+  const rows = track ? all.filter((w) => w.track === track) : all;
+  const counts = TRACKS.map((t) => ({ ...t, n: all.filter((w) => w.track === t.code).length })).filter(
+    (t) => t.n > 0
+  );
+
+  const chip = (code, label, n) => `
+    <a class="wk-chip ${track === code ? "on" : ""}" href="#/works${code ? "?track=" + code : ""}">
+      ${esc(label)}<b>${n}</b>
+    </a>`;
+
+  el.innerHTML = shell(`
+    <div class="block-head">
+      <h2>参赛作品</h2>
+      <span class="card-note">共 ${all.length} 件已公示</span>
+    </div>
+
+    ${
+      !all.length
+        ? `<div class="empty">
+             <p style="margin-bottom:6px">还没有已公示的作品</p>
+             <p class="tiny">提交截止后由主办方统一公示；在此之前作品仅本队与评委可见。</p>
+           </div>`
+        : `<div class="wk-bar">
+             <div class="row row-wrap" style="gap:6px">
+               ${chip("", "全部", all.length)}
+               ${counts.map((t) => chip(t.code, `赛道 ${t.code} · ${t.name}`, t.n)).join("")}
+             </div>
+             <input type="search" id="wk-q" class="wk-search" placeholder="搜索作品名、队伍或简介" />
+           </div>
+           <div class="grid grid-auto" id="wk-grid">
+             ${rows
+               .map(
+                 (w) => `
+               <a class="work-card track-${esc(w.track)}" href="#/works/${w.id}"
+                  data-text="${esc(`${w.title} ${w.summary || ""} ${w.owner_name || ""}`.toLowerCase())}">
+                 <div class="work-cover">
+                   ${pixelBanner(`${w.id}-${w.title}`)}
+                   <span class="work-code">${esc(w.track)}</span>
+                 </div>
+                 <div class="work-body">
+                   <div class="row-between" style="margin-bottom:7px">
+                     <span class="tag ${w.track === "A" || w.track === "B" ? "tag-blue" : "tag-amber"}">${esc(
+                   trackOf(w.track).name
+                 )}</span>
+                     <span class="tiny dim">${esc(workDate(w))}</span>
+                   </div>
+                   <h3 class="work-title">${esc(w.title)}</h3>
+                   <p class="work-sum">${esc(w.summary || "")}</p>
+                   <div class="work-foot">
+                     <span class="tiny dim">${esc(w.owner_name || "匿名队伍")}</span>
+                     <span class="tiny">详情 →</span>
+                   </div>
+                 </div>
+               </a>`
+               )
+               .join("")}
+           </div>
+           <div class="empty" id="wk-none" style="display:none">
+             <p>${track ? "该赛道没有匹配的作品" : "没有匹配的作品"}</p>
+           </div>`
+    }
+  `);
+  bindShell();
+
+  const q = el.querySelector("#wk-q");
+  if (q) {
+    const cards = [...el.querySelectorAll(".work-card")];
+    const none = el.querySelector("#wk-none");
+    q.oninput = () => {
+      const kw = q.value.trim().toLowerCase();
+      let shown = 0;
+      for (const c of cards) {
+        const hit = !kw || c.dataset.text.includes(kw);
+        c.style.display = hit ? "" : "none";
+        if (hit) shown++;
+      }
+      none.style.display = shown ? "none" : "";
+      none.querySelector("p").textContent = rows.length && !shown ? "没有匹配的作品" : "该赛道没有匹配的作品";
+    };
+  }
+}
+
+export async function workDetailView(el, path) {
+  const id = Number(((path || "").split("?")[0].split("/")[2] || "").replace(/\D/g, ""));
+  let w = null;
+  try {
+    w = await publicWork(id);
+  } catch (_) {}
+
+  if (!w) {
+    el.innerHTML = shell(`
+      <div class="empty" style="max-width:520px;margin:70px auto">
+        <p style="margin-bottom:6px">没有找到这件作品</p>
+        <p class="tiny">它可能尚未公示，或已被撤回。</p>
+        <a class="btn btn-sm" href="#/works" style="margin-top:14px">返回作品列表</a>
+      </div>`);
+    bindShell();
+    return;
+  }
+
+  const d = w.detail || {};
+  const l = w.links || {};
+  const t = trackOf(w.track);
+  const sections = [
+    ["创意来源", d.origin],
+    ["核心玩法", d.gameplay],
+    ["技术实现", d.tech],
+    ["亮点", d.highlight],
+    ["安装说明", d.install],
+    ["依赖与许可证", d.license],
+    ["已知问题", d.known],
+  ].filter(([, v]) => v && String(v).trim());
+
+  const scanBadge = (() => {
+    const sc = w.scan;
+    if (!sc || sc.enabled === false) return "";
+    const map = {
+      clean: ["tag-teal", "未检出威胁"],
+      malicious: ["tag-red", "检出恶意"],
+      suspicious: ["tag-amber", "有可疑项"],
+      notfound: ["tag", "未被收录"],
+      ratelimited: ["tag-amber", "查询受限"],
+      unavailable: ["tag", "查询失败"],
+      unauthorized: ["tag-red", "密钥无效"],
+      unknown: ["tag", "结果未知"],
+    };
+    const [cls, label] = map[sc.status] || ["tag", sc.status || "未知"];
+    return `<span class="${cls}">${esc(label)}</span>`;
+  })();
+
+  el.innerHTML = shell(`
+    <div class="block-head" style="align-items:flex-start">
+      <div style="min-width:0">
+        <a href="#/works" class="tiny dim">← 参赛作品</a>
+        <h2 style="margin:8px 0 6px">${esc(w.title)}</h2>
+        <p class="small muted" style="margin:0;max-width:62ch">${esc(w.summary || "")}</p>
+      </div>
+      <span class="tag ${w.track === "A" || w.track === "B" ? "tag-blue" : "tag-amber"}" style="flex:0 0 auto">
+        赛道 ${esc(w.track)} · ${esc(t.name)}
+      </span>
+    </div>
+
+    <div class="work-split">
+      <article class="col" style="gap:16px">
+        ${
+          sections.length
+            ? sections
+                .map(
+                  ([k, v]) => `
+              <div class="card">
+                <div class="card-head"><h2>${esc(k)}</h2></div>
+                <p class="small" style="white-space:pre-wrap;margin:0;line-height:1.85">${esc(v)}</p>
+              </div>`
+                )
+                .join("")
+            : `<div class="card"><div class="empty" style="padding:28px">该队伍没有填写项目说明</div></div>`
+        }
+      </article>
+
+      <aside class="col" style="gap:14px">
+        <div class="card">
+          <div class="card-head"><h2>作品信息</h2></div>
+          <div class="kv"><span>队伍</span><b>${esc(w.owner_name || "匿名队伍")}</b></div>
+          <div class="kv"><span>游戏</span><b>${esc(t.game || "—")}</b></div>
+          <div class="kv"><span>类型</span><b>${esc(t.type || "—")}</b></div>
+          <div class="kv"><span>提交版本</span><b class="mono">v${esc(w.version_no)}</b></div>
+          <div class="kv"><span>公示时间</span><b>${esc(workDate(w))}</b></div>
+          ${w.pkg_size ? `<div class="kv"><span>包体大小</span><b class="mono">${esc(w.pkg_size)}</b></div>` : ""}
+          ${
+            w.pkg_sha256
+              ? `<div class="kv col-kv"><span>SHA-256</span><b class="mono tiny dim" style="word-break:break-all">${esc(
+                  w.pkg_sha256
+                )}</b></div>`
+              : ""
+          }
+          ${scanBadge ? `<div class="row" style="margin-top:10px">${scanBadge}</div>` : ""}
+        </div>
+
+        <div class="card">
+          <div class="card-head"><h2>获取作品</h2></div>
+          ${
+            w.shared_path
+              ? `<button class="btn btn-primary btn-block" id="btn-dl">下载作品包</button>
+                 <p class="tiny dim" style="margin:8px 0 0">下载链接 1 小时内有效。</p>`
+              : `<p class="tiny dim" style="margin:0">队伍尚未发布作品包。</p>`
+          }
+          ${
+            l.video
+              ? `<a class="btn btn-block" href="${esc(l.video)}" target="_blank" rel="noopener noreferrer" style="margin-top:8px">观看演示视频</a>`
+              : ""
+          }
+          ${
+            l.repo
+              ? `<a class="btn btn-ghost btn-block" href="${esc(l.repo)}" target="_blank" rel="noopener noreferrer" style="margin-top:8px">源码仓库</a>`
+              : ""
+          }
+          <div class="row row-wrap" style="gap:8px;margin-top:12px">
+            <button class="btn btn-sm" id="btn-copy">复制链接</button>
+            <a class="btn btn-sm" href="#/works">回到列表</a>
+          </div>
+        </div>
+      </aside>
+    </div>
+  `);
+  bindShell();
+
+  const dl = el.querySelector("#btn-dl");
+  if (dl) {
+    if (!state.session) {
+      dl.textContent = "登录后下载";
+      dl.onclick = () => navigate("/login");
+    } else {
+      dl.onclick = async () => {
+        busy(dl, true, "生成链接…");
+        try {
+          const url = await signedDownload(w.shared_path, 3600);
+          if (!url) throw new Error("无法生成下载链接");
+          window.open(url, "_blank", "noopener");
+          busy(dl, false);
+        } catch (e) {
+          toast(errMsg(e), "err");
+          busy(dl, false);
+        }
+      };
+    }
+  }
+
+  const cp = el.querySelector("#btn-copy");
+  if (cp) {
+    cp.onclick = async () => {
+      const url = `${location.origin}${location.pathname}#/works/${w.id}`;
+      try {
+        await navigator.clipboard.writeText(url);
+        toast("链接已复制", "ok");
+      } catch (_) {
+        toast(url, "ok");
+      }
+    };
+  }
 }
 
 /* ---------------------------- 公告 ---------------------------- */

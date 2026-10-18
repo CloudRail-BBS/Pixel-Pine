@@ -1,5 +1,7 @@
 import { cloud, state, loadSession, loadMe, loadActivity, route, render, navigate } from "./core.js";
-import { homeView, rulesView, loginView, resultsView, noticesView, cnkdView } from "./views-public.js";
+import {
+  homeView, rulesView, loginView, resultsView, noticesView, cnkdView, worksView, workDetailView,
+} from "./views-public.js";
 
 const lazyView = (loader, name) => async (el, path) => {
   const mod = await loader();
@@ -50,6 +52,8 @@ function registerRoutes() {
     return loginView(el);
   });
   route("/results", resultsView);
+  route("/works", worksView);
+  route("/works/*", workDetailView);
   route("/notices", noticesView);
   route("/cnkd", cnkdView);
   route("/me", lazyView(work, "meView"));

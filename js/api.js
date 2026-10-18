@@ -479,3 +479,63 @@ export async function revokeCertificate(id) {
   const rows = unwrap(await db.from("certificates").delete().eq("id", id).select());
   if (!rows || !rows.length) throw new Error("撤销失败：没有权限");
 }
+
+/* ---------------- 组织单位 ---------------- */
+
+export async function listPartners() {
+  return cached("partners", 60000, async () => {
+    const rows =
+      unwrap(await db.from("partners").select("*").order("sort").order("created_at")) || [];
+    return rows;
+  });
+}
+
+export async function savePartner(p) {
+  const payload = {
+    name: String(p.name || "").trim(),
+    role: p.role || "co",
+    logo_url: String(p.logoUrl || "").trim() || null,
+    site_url: String(p.siteUrl || "").trim() || null,
+    note: String(p.note || "").trim() || null,
+    sort: Number(p.sort) || 100,
+  };
+  if (!payload.name) throw new Error("请填写单位名称");
+  if (p.id) {
+    const rows = unwrap(await db.from("partners").update(payload).eq("id", p.id).select());
+    if (!rows || !rows.length) throw new Error("保存失败：没有权限修改该单位");
+  } else {
+    payload.owner_id = sessionUid();
+    unwrap(await db.from("partners").insert(payload).select());
+  }
+  invalidate("partners");
+}
+
+export async function deletePartner(id) {
+  const rows = unwrap(await db.from("partners").delete().eq("id", id).select());
+  if (!rows || !rows.length) throw new Error("删除失败：没有权限");
+  invalidate("partners");
+}
+
+/* ---------------- 公开展示的作品 ---------------- */
+
+/** 只取已公示作品；登录者自己的草稿/未公示作品不会混进展厅 */
+export async function publicWorks() {
+  return cached("public_works", 20000, async () => {
+    const rows =
+      unwrap(
+        await db
+          .from("submissions")
+          .select("*")
+          .eq("status", "public")
+          .order("created_at", { ascending: false })
+      ) || [];
+    return rows;
+  });
+}
+
+export async function publicWork(id) {
+  if (!id) return null;
+  return unwrap(
+    await db.from("submissions").select("*").eq("id", id).eq("status", "public").maybeSingle()
+  );
+}

@@ -2,13 +2,14 @@ import {
   state, shell, bindShell, navigate, toast, esc, fmtDate, fmtFull, timeLeft, ago,
   requireLogin, busy, errMsg, modal, confirmBox, db, unwrap, isAdmin,
 } from "./core.js";
-import { TRACKS, trackOf, STATUS_TEXT, TEAM_STATUS, DIMENSIONS, AWARDS } from "./config.js";
+import { TRACKS, trackOf, STATUS_TEXT, TEAM_STATUS, DIMENSIONS, AWARDS, PARTNER_ROLES, partnerRoleOf } from "./config.js";
 import {
   listTeams, allSubmissions, allReviews, listJudges, listAnnouncements, createAnnouncement,
   deleteAnnouncement, setTeamStatus, setCompatibility, assignReviews, publishResults,
   rankSubmissions, trackCounts, awardPlan, saveActivity, listAllAppeals, replyAppeal,
   setUserRole, listVersions, listDocuments, saveDocument,
   listCertificates, issueCertificates, revokeCertificate,
+  listPartners, savePartner, deletePartner,
 } from "./api.js";
 
 const val = (root, sel) => (root.querySelector(sel)?.value || "").trim();
@@ -23,6 +24,7 @@ const TABS = [
   { key: "certs", label: "证书" },
   { key: "notices", label: "公告" },
   { key: "content", label: "内容" },
+  { key: "partners", label: "单位" },
   { key: "appeals", label: "申诉" },
   { key: "system", label: "系统" },
 ];
@@ -52,7 +54,7 @@ export async function adminView(el, path) {
 
   const tab = (path || "").split("/")[2] || "overview";
 
-  const [teams, subs, reviews, notices, appeals, profiles, members, sigs, docs, certs, health] = await Promise.all([
+  const [teams, subs, reviews, notices, appeals, profiles, members, sigs, docs, certs, partners, health] = await Promise.all([
     listTeams().catch(() => []),
     allSubmissions().catch(() => []),
     allReviews().catch(() => []),
@@ -63,6 +65,7 @@ export async function adminView(el, path) {
     db.from("signatures").select("owner_id, agreed_name, created_at, doc_version").then(unwrap).catch(() => []),
     listDocuments().catch(() => []),
     listCertificates().catch(() => []),
+    listPartners().catch(() => []),
     fetch("/api/health").then((r) => r.json()).catch(() => null),
   ]);
 
@@ -81,6 +84,7 @@ export async function adminView(el, path) {
       case "certs": return certsTab(subs, teams, members, certs);
       case "notices": return noticesTab(notices);
       case "content": return contentTab(docs);
+      case "partners": return partnersTab(partners);
       case "appeals": return appealsTab(appeals);
       case "system": return systemTab(health, profiles);
       default: return overviewTab({ teams, subs, reviews, counts, reviewed, pendingAppeals, pendingTeams, pendingWorks, health, members, profiles, sigs });
@@ -108,7 +112,7 @@ export async function adminView(el, path) {
   `, { wide: true });
   bindShell();
 
-  wireAdmin(el, { teams, subs, reviews, notices, appeals, profiles, members, certs, tab });
+  wireAdmin(el, { teams, subs, reviews, notices, appeals, profiles, members, certs, partners, tab });
 }
 
 /* ------------------------------ 概览 ------------------------------ */
@@ -409,6 +413,123 @@ function contentTab(docs) {
       <p class="small muted" style="margin-bottom:10px">公约每份签署都绑定了<b>文本哈希</b>。如果允许在后台直接改文本，已签署记录的哈希会对不上，"签的是哪一版"就失去凭证意义。</p>
       <p class="small muted" style="margin:0">公约如需修订，走版本升级：改代码中的文本、把版本号从 v1.0 提到 v1.1，再重新部署。届时所有人需要重新签署，旧记录仍然保留可查。</p>
     </div>`;
+}
+
+/* ------------------------------ 组织单位 ------------------------------ */
+
+function monogram(name) {
+  const s = String(name || "").trim();
+  if (!s) return "·";
+  if (/^[\x00-\x7F]+$/.test(s)) {
+    return s.split(/\s+/).filter(Boolean).slice(0, 2).map((w) => w[0]).join("").toUpperCase();
+  }
+  return s.slice(0, 2);
+}
+
+function partnersTab(partners) {
+  const rows = (partners || []).slice().sort((a, b) => (a.sort || 100) - (b.sort || 100));
+  return `
+    <div class="card block">
+      <div class="card-head"><h2>组织单位</h2><span class="card-note">显示在首页「组织单位」</span></div>
+      <p class="small muted" style="margin-bottom:14px">
+        按类型分组展示：主办 / 协办 / 支持。不填 Logo 时用单位名称生成文字标；一个单位都没有时，首页整块不显示。
+      </p>
+      <div class="row row-wrap" style="gap:10px">
+        <button class="btn btn-primary" id="btn-add-partner">+ 添加单位</button>
+        <a class="btn btn-ghost" href="#/home" target="_blank" rel="noopener">预览首页</a>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-head"><h2>已添加</h2><span class="card-note">${rows.length} 个</span></div>
+      ${
+        rows.length
+          ? rows
+              .map(
+                (p) => `
+        <div class="org-admin-row">
+          <span class="org-logo sm">${
+            p.logo_url
+              ? `<img src="${esc(p.logo_url)}" alt="" />`
+              : `<b>${esc(monogram(p.name))}</b>`
+          }</span>
+          <div style="min-width:0;flex:1">
+            <div class="strong" style="font-size:13.5px">${esc(p.name)}</div>
+            <div class="tiny dim">${esc(partnerRoleOf(p.role).name)}${
+                  p.note ? " · " + esc(p.note) : ""
+                }${p.site_url ? " · " + esc(p.site_url) : ""}</div>
+          </div>
+          <span class="mono tiny dim">${esc(String(p.sort ?? 100))}</span>
+          <button class="btn btn-sm" data-edit-partner="${p.id}">编辑</button>
+          <button class="btn btn-sm btn-ghost" data-del-partner="${p.id}">删除</button>
+        </div>`
+              )
+              .join("")
+          : `<div class="empty" style="padding:26px">还没有单位，点上方「+ 添加单位」</div>`
+      }
+    </div>`;
+}
+
+function openPartnerForm(el, existing) {
+  const p = existing || {};
+  const m = modal(
+    `<h3>${existing ? "编辑单位" : "添加单位"}</h3>
+     <div class="grid grid-2" style="margin-top:14px">
+       <div class="field"><label class="req">单位名称</label>
+         <input id="pf-name" value="${esc(p.name || "")}" placeholder="如：像素松组委会" maxlength="40" /></div>
+       <div class="field"><label>类型</label>
+         <select id="pf-role">
+           ${PARTNER_ROLES.map(
+             (r) => `<option value="${r.key}" ${p.role === r.key ? "selected" : ""}>${esc(r.name)}</option>`
+           ).join("")}
+         </select></div>
+     </div>
+     <div class="grid grid-2">
+       <div class="field"><label>Logo 图片地址</label>
+         <input id="pf-logo" value="${esc(p.logo_url || "")}" placeholder="https://…（留空用文字标）" /></div>
+       <div class="field"><label>官网 / 主页</label>
+         <input id="pf-site" value="${esc(p.site_url || "")}" placeholder="https://…" /></div>
+     </div>
+     <div class="grid grid-2">
+       <div class="field"><label>一句话说明</label>
+         <input id="pf-note" value="${esc(p.note || "")}" placeholder="如：提供赛事服务器与技术支持" maxlength="40" /></div>
+       <div class="field"><label>排序</label>
+         <input id="pf-sort" type="number" value="${esc(String(p.sort ?? 100))}" />
+         <div class="hint">数字小的排前面</div></div>
+     </div>
+     <div class="row" style="justify-content:flex-end;gap:9px;margin-top:16px">
+       <button class="btn btn-ghost" data-x="cancel">取消</button>
+       <button class="btn btn-primary" data-x="save">${existing ? "保存" : "添加"}</button>
+     </div>`,
+    {
+      onMount(host) {
+        const btn = host.querySelector('[data-x="save"]');
+        host.querySelector('[data-x="cancel"]').onclick = () => m.close();
+        btn.onclick = async () => {
+          const name = host.querySelector("#pf-name").value.trim();
+          if (!name) return toast("请填写单位名称", "err");
+          busy(btn, true, "保存中…");
+          try {
+            await savePartner({
+              id: p.id,
+              name,
+              role: host.querySelector("#pf-role").value,
+              logoUrl: host.querySelector("#pf-logo").value,
+              siteUrl: host.querySelector("#pf-site").value,
+              note: host.querySelector("#pf-note").value,
+              sort: host.querySelector("#pf-sort").value,
+            });
+            m.close();
+            toast(existing ? "已保存" : "已添加", "ok");
+            adminView(el, "#/admin/partners");
+          } catch (e) {
+            toast(errMsg(e), "err");
+            busy(btn, false);
+          }
+        };
+      },
+    }
+  );
 }
 
 /* ------------------------------ 证书 ------------------------------ */
@@ -770,6 +891,30 @@ function wireAdmin(el, ctx) {
       toast("缓存已清空", "ok");
     };
   }
+
+  const addPartner = el.querySelector("#btn-add-partner");
+  if (addPartner) addPartner.onclick = () => openPartnerForm(el, null);
+
+  el.querySelectorAll("[data-edit-partner]").forEach((b) => {
+    b.onclick = () => {
+      const p = (ctx.partners || []).find((x) => x.id === Number(b.dataset.editPartner));
+      if (p) openPartnerForm(el, p);
+    };
+  });
+
+  el.querySelectorAll("[data-del-partner]").forEach((b) => {
+    b.onclick = async () => {
+      const p = (ctx.partners || []).find((x) => x.id === Number(b.dataset.delPartner));
+      if (!(await confirmBox("删除单位", `将移除「${esc(p?.name || "")}」，首页对应位置同时消失。`, "删除"))) return;
+      try {
+        await deletePartner(Number(b.dataset.delPartner));
+        toast("已删除", "ok");
+        adminView(el, "#/admin/partners");
+      } catch (e) {
+        toast(errMsg(e), "err");
+      }
+    };
+  });
 }
 
 function openCompatModal(s, refresh) {

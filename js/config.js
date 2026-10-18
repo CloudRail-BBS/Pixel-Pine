@@ -96,3 +96,12 @@ export const AWARDS = [
 ];
 
 export const awardOf = (key) => AWARDS.find((a) => a.key === key) || { key, name: key, rank: 9 };
+
+export const PARTNER_ROLES = [
+  { key: "host", name: "主办单位", note: "活动发起与规则解释" },
+  { key: "co", name: "协办单位", note: "联合组织与资源支持" },
+  { key: "support", name: "支持单位", note: "场地、奖品或宣传支持" },
+];
+
+export const partnerRoleOf = (key) =>
+  PARTNER_ROLES.find((r) => r.key === key) || { key, name: key || "其他", note: "" };
