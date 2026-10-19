@@ -4,20 +4,25 @@ const GT_SRC = "https://static.geetest.com/v4/gt4.js";
 const CFG_TIMEOUT = 5000; // 读后端配置
 const SCRIPT_TIMEOUT = 8000; // 拉极验脚本
 const INIT_TIMEOUT = 8000; // 组件就绪（不弹窗基本就是配置或网络问题）
-const POPUP_TIMEOUT = 4000; // 回调之后弹窗必须真的出现
+const POPUP_TIMEOUT = 6000; // 回调之后弹窗必须真的出现
 const SOLVE_TIMEOUT = 60000; // 留给用户完成拼图
 const VALIDATE_TIMEOUT = 10000; // 服务端二次校验
 
 let scriptPromise = null;
 let cfgCache = null;
 
-/** 极验的节点都带 geetest 前缀；用实际尺寸排除仅注入但不显示的占位节点 */
+/** 极验的节点都带 geetest 前缀，弹窗也可能用 iframe 渲染 */
+function geetestPopupCandidates() {
+  return [...document.querySelectorAll('[class*="geetest"], [id*="geetest"], iframe[src*="geetest"]')].filter(
+    (n) => {
+      const r = n.getBoundingClientRect();
+      return r.width > 40 && r.height > 40;
+    }
+  );
+}
+
 function geetestPopupVisible() {
-  for (const n of document.querySelectorAll('[class*="geetest"], [id*="geetest"]')) {
-    const r = n.getBoundingClientRect();
-    if (r.width > 40 && r.height > 40 && getComputedStyle(n).visibility !== "hidden") return true;
-  }
-  return false;
+  return geetestPopupCandidates().length > 0;
 }
 
 function timeoutFetch(url, ms, opts) {
@@ -103,14 +108,18 @@ export async function verifyCaptcha(prefetched) {
     captchaId = cfg.captchaId;
   }
 
+  const t0 = performance.now();
   try {
     await loadScript();
   } catch (e) {
+    console.info("[geetest] 脚本加载失败", e && e.message);
     return { ok: false, reason: e.message || "极验脚本未能加载" };
   }
   if (typeof window.initGeetest4 !== "function") {
+    console.info("[geetest] 脚本已加载但 initGeetest4 不可用");
     return { ok: false, reason: "极验组件不可用，请刷新页面后重试" };
   }
+  console.info(`[geetest] 准备初始化 captchaId=${String(captchaId).slice(0, 8)}… 脚本耗时=${Math.round(performance.now() - t0)}ms`);
 
   return new Promise((resolve) => {
     let settled = false;
@@ -124,12 +133,14 @@ export async function verifyCaptcha(prefetched) {
       clearTimeout(initTimer);
       clearTimeout(solveTimer);
       if (popupTimer) clearInterval(popupTimer);
+      console.info("[geetest] 结果", result.ok ? "通过" : "未通过", result.reason || "", `耗时=${Math.round(performance.now() - t0)}ms`);
       resolve(result);
     };
 
     // 组件迟迟不回调，说明 Captcha ID / 域名白名单 / 网络有问题，直接给出可读提示
     const initTimer = setTimeout(() => {
       if (!inited) {
+        console.info("[geetest] 初始化超时：initGeetest4 回调未触发");
         finish({
           ok: false,
           reason: "人机验证组件未就绪，请确认极验 Captcha ID 与域名白名单配置正确",
@@ -143,11 +154,15 @@ export async function verifyCaptcha(prefetched) {
           captchaId,
           product: "popup",
           language: "zho",
-          hideBar: ["close"],
         },
         (captcha) => {
           inited = true;
           clearTimeout(initTimer);
+          console.info(
+            `[geetest] 组件回调 ${Math.round(performance.now() - t0)}ms`,
+            "方法:",
+            Object.keys(captcha || {}).filter((k) => typeof captcha[k] === "function").join(",")
+          );
           solveTimer = setTimeout(() => finish({ ok: false, reason: "人机验证超时，请重试" }), SOLVE_TIMEOUT);
 
           captcha.onSuccess(async () => {
@@ -178,10 +193,20 @@ export async function verifyCaptcha(prefetched) {
           captcha.onError(() => finish({ ok: false, reason: "验证出错，请刷新后重试" }));
           captcha.onClose(() => finish({ ok: false, reason: "已取消人机验证" }));
 
+          const hasShow =
+            typeof captcha.showCaptcha === "function" ||
+            typeof captcha.showBox === "function" ||
+            typeof captcha.verify === "function";
+          if (!hasShow) {
+            return finish({
+              ok: false,
+              reason: "极验组件版本不兼容（没有显示方法），请刷新或更换网络环境重试",
+            });
+          }
           try {
             if (typeof captcha.showCaptcha === "function") captcha.showCaptcha();
             else if (typeof captcha.showBox === "function") captcha.showBox();
-            else if (typeof captcha.verify === "function") captcha.verify();
+            else captcha.verify();
           } catch (_) {
             return finish({ ok: false, reason: "无法打开人机验证弹窗，请刷新后重试" });
           }
@@ -201,6 +226,14 @@ export async function verifyCaptcha(prefetched) {
             if (Date.now() - popupStart > POPUP_TIMEOUT) {
               clearInterval(popupTimer);
               popupTimer = null;
+              const all = document.querySelectorAll('[class*="geetest"], [id*="geetest"], iframe[src*="geetest"]');
+              console.info(
+                "[geetest] 未检测到可见弹窗，相关节点 " + all.length + " 个:",
+                [...all].slice(0, 8).map((n) => {
+                  const r = n.getBoundingClientRect();
+                  return `${n.tagName}.${String(n.className || n.id).slice(0, 36)} ${Math.round(r.width)}x${Math.round(r.height)}`;
+                })
+              );
               finish({
                 ok: false,
                 reason: "人机验证没有弹出，请检查极验 Captcha ID 与域名白名单",
