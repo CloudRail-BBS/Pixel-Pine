@@ -27,13 +27,20 @@ function donateBlock(cfg) {
   if (!d || !d.enabled || !d.url) return "";
   return `
     <div class="donate-card">
-      <div style="min-width:0">
-        <div class="strong" style="font-size:13.5px">支持像素松</div>
-        <p class="tiny dim" style="margin:5px 0 0">${esc(
+      <span class="donate-icon" aria-hidden="true">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M12 20s-7-4.35-7-9a4 4 0 0 1 7-2.65A4 4 0 0 1 19 11c0 4.65-7 9-7 9Z" />
+        </svg>
+      </span>
+      <div style="min-width:0;flex:1">
+        <div class="donate-title">支持像素松</div>
+        <p class="donate-note">${esc(
           d.note || "活动不收取任何费用，服务器与域名由志愿者承担。"
         )}</p>
       </div>
-      <a class="btn btn-sm" href="${esc(d.url)}" target="_blank" rel="noopener noreferrer">去爱发电</a>
+      <a class="btn btn-sm donate-btn" href="${esc(d.url)}" target="_blank" rel="noopener noreferrer">
+        去爱发电 →
+      </a>
     </div>`;
 }
 
