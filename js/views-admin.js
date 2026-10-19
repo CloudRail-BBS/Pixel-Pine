@@ -251,7 +251,9 @@ function teamsTab(teams, members) {
         <tbody>${teams.map((t) => {
           const n = countOf(t.id);
           return `<tr>
-            <td class="strong">${esc(t.name)}<div class="mono tiny dim">${esc(t.invite_code)}</div></td>
+            <td class="strong">${esc(t.name)}${
+              t.kind === "individual" ? ' <span class="tag">个人</span>' : ""
+            }<div class="mono tiny dim">${esc(t.invite_code)}</div></td>
             <td><span class="tag">${esc(t.track)}</span></td>
             <td class="small">${esc(t.owner_name || "—")}</td>
             <td class="mono ${n < 3 ? "tag-red" : ""}">${n}</td>
@@ -1225,7 +1227,7 @@ function wireAdmin(el, ctx) {
 
       busy(ev.currentTarget, true, "颁发中…");
       try {
-        const n = await issueCertificates({ ...sub, team_name: team?.name || null }, todo, awardKey, awardName);
+        const n = await issueCertificates({ ...sub, team_name: team?.name || null, team_kind: team?.kind || "team" }, todo, awardKey, awardName);
         toast(`已颁发 ${n} 张证书`, "ok");
         adminView(el, "#/admin/certs");
       } catch (err) {

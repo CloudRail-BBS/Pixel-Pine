@@ -26,6 +26,8 @@ CREATE TABLE IF NOT EXISTS teams (
   name TEXT NOT NULL,
   track TEXT NOT NULL,
   invite_code TEXT NOT NULL UNIQUE,
+  -- team = 团队参赛；individual = 个人参赛（内部是 1 人队伍，跳过人数校验）
+  kind TEXT NOT NULL DEFAULT 'team',
   status TEXT NOT NULL DEFAULT 'pending',
   review_note TEXT,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()

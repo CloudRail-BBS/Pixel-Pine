@@ -64,8 +64,8 @@ export async function meView(el) {
       <div class="col" style="gap:14px">
         <div class="card">
           <div class="card-head"><h2>我的状态</h2></div>
-          <div class="row-between" style="margin-bottom:10px"><span class="small muted">队伍</span>
-            <span class="strong">${team ? esc(team.name) : "尚未组队"}</span></div>
+          <div class="row-between" style="margin-bottom:10px"><span class="small muted">${team?.kind === "individual" ? "参赛形式" : "队伍"}</span>
+            <span class="strong">${team ? (team.kind === "individual" ? "个人参赛" : esc(team.name)) : "尚未报名"}</span></div>
           <div class="row-between" style="margin-bottom:10px"><span class="small muted">赛道</span>
             <span class="strong">${team ? esc(trackOf(team.track).name) : "—"}</span></div>
           <div class="row-between"><span class="small muted">账号 ID</span>
@@ -197,8 +197,8 @@ export async function teamView(el) {
 
   if (!team) {
     el.innerHTML = shell(`
-      <div class="block-head"><h2>组队</h2><span class="card-note">每队 3–5 人 · 每人只能加入 1 队</span></div>
-      <div class="grid grid-2">
+      <div class="block-head"><h2>报名</h2><span class="card-note">团队 3–5 人 · 或个人参赛</span></div>
+      <div class="grid grid-3">
         <div class="card">
           <div class="card-head"><h2>创建队伍</h2></div>
           <div class="field"><label class="req">队伍名称</label>
@@ -219,6 +219,17 @@ export async function teamView(el) {
           <div class="divider"></div>
           <p class="tiny dim" style="margin:0">队伍满 3 人后即可提交作品，上限 5 人。队长可在下方成员列表中移除成员。</p>
         </div>
+        <div class="card">
+          <div class="card-head"><h2>个人参赛</h2><span class="card-note">无需组队</span></div>
+          <div class="field"><label class="req">参赛赛道</label>
+            <select id="t-track-solo">
+              ${TRACKS.map((t) => `<option value="${t.code}">${esc(t.game)} · ${esc(t.type)}（赛道 ${t.code}）</option>`).join("")}
+            </select>
+            <div class="hint">赛道创建后不可更改</div></div>
+          <button class="btn" id="btn-solo">以个人身份参赛</button>
+          <div class="divider"></div>
+          <p class="tiny dim" style="margin:0">独立提交作品、独立评审，证书署你个人的名字。报名后同样不能再加入其他队伍。</p>
+        </div>
       </div>
     `);
     bindShell();
@@ -231,6 +242,29 @@ export async function teamView(el) {
       try {
         await createTeam({ name, track: val(el, "#t-track") });
         toast("队伍已创建，把邀请码发给队友", "ok");
+        teamView(el);
+      } catch (err) {
+        toast(errMsg(err), "err");
+        busy(btn, false);
+      }
+    };
+
+    el.querySelector("#btn-solo").onclick = async (e) => {
+      const btn = e.currentTarget;
+      const track = val(el, "#t-track-solo");
+      const name = state.me?.nickname || "个人参赛";
+      if (
+        !(await confirmBox(
+          "以个人身份参赛",
+          `将以「${esc(name)}」个人身份参加 ${esc(trackOf(track).name)} 赛道。报名后不能再加入其他队伍，确定吗？`,
+          "确认参赛"
+        ))
+      )
+        return;
+      busy(btn, true, "报名中…");
+      try {
+        await createTeam({ name, track, kind: "individual" });
+        toast("个人参赛已报名，可直接提交作品", "ok");
         teamView(el);
       } catch (err) {
         toast(errMsg(err), "err");
@@ -256,16 +290,27 @@ export async function teamView(el) {
   }
 
   const isLeader = membership.is_leader;
-  const sizeOk = members.length >= 3;
+  const isSolo = team.kind === "individual";
+  // 个人参赛不受「每队至少 3 人」限制
+  const sizeOk = isSolo || members.length >= 3;
 
   el.innerHTML = shell(`
-    <div class="block-head"><h2>${esc(team.name)}</h2>
+    <div class="block-head"><h2>${esc(team.name)}${isSolo ? ' <span class="tag">个人参赛</span>' : ""}</h2>
       <span class="tag ${(TEAM_STATUS[team.status] || {}).cls || "tag"}">${esc((TEAM_STATUS[team.status] || {}).label || team.status)}</span>
     </div>
     <div class="grid grid-3 block">
       <div class="stat"><div class="stat-label">赛道</div><div class="stat-value" style="font-size:18px">${esc(trackOf(team.track).name)}</div></div>
-      <div class="stat"><div class="stat-label">成员</div><div class="stat-value">${members.length}<small>/ 5</small></div></div>
-      <div class="stat"><div class="stat-label">邀请码</div><div class="stat-value mono" style="font-size:20px;color:var(--teal);letter-spacing:2px">${esc(team.invite_code)}</div></div>
+      ${
+        isSolo
+          ? `<div class="stat"><div class="stat-label">参赛形式</div><div class="stat-value" style="font-size:18px">个人参赛</div></div>
+             <div class="stat"><div class="stat-label">报名状态</div><div class="stat-value" style="font-size:18px">${esc(
+               (TEAM_STATUS[team.status] || {}).label || team.status
+             )}</div></div>`
+          : `<div class="stat"><div class="stat-label">成员</div><div class="stat-value">${members.length}<small>/ 5</small></div></div>
+             <div class="stat"><div class="stat-label">邀请码</div><div class="stat-value mono" style="font-size:20px;color:var(--teal);letter-spacing:2px">${esc(
+               team.invite_code
+             )}</div></div>`
+      }
     </div>
 
     ${!sizeOk ? `<div class="card" style="border-color:rgba(239,159,39,.35);margin-bottom:20px">
@@ -275,7 +320,13 @@ export async function teamView(el) {
       <p class="small" style="margin:0;color:var(--red)">报名被驳回：${esc(team.review_note)}</p></div>` : ""}
 
     <div class="card">
-      <div class="card-head"><h2>成员</h2>${isLeader ? '<span class="card-note">你是队长</span>' : '<span class="card-note">队长可移除成员</span>'}</div>
+      <div class="card-head"><h2>${isSolo ? "参赛信息" : "成员"}</h2>${
+        isSolo
+          ? '<span class="card-note">个人参赛</span>'
+          : isLeader
+          ? '<span class="card-note">你是队长</span>'
+          : '<span class="card-note">队长可移除成员</span>'
+      }</div>
       <div class="tbl-wrap"><table class="tbl">
         <thead><tr><th>昵称</th><th>身份</th><th>加入时间</th><th class="right">操作</th></tr></thead>
         <tbody>
@@ -293,8 +344,10 @@ export async function teamView(el) {
       </table></div>
       <div class="divider"></div>
       <div class="row row-wrap">
-        <button class="btn btn-sm btn-danger" id="btn-leave">退出队伍</button>
-        <span class="tiny dim">队长退出前请先转让队长（联系主办方协助），或整队退赛</span>
+        <button class="btn btn-sm btn-danger" id="btn-leave">${isSolo ? "退出比赛" : "退出队伍"}</button>
+        <span class="tiny dim">${
+          isSolo ? "退出后可以重新报名，已提交的作品不会自动撤销" : "队长退出前请先转让队长（联系主办方协助），或整队退赛"
+        }</span>
       </div>
     </div>
   `);
@@ -312,7 +365,14 @@ export async function teamView(el) {
   });
 
   el.querySelector("#btn-leave").onclick = async () => {
-    if (!(await confirmBox("退出队伍", "退出后需要重新邀请才能加入，确定吗？", "退出"))) return;
+    const ok = await confirmBox(
+      isSolo ? "退出比赛" : "退出队伍",
+      isSolo
+        ? "退出个人参赛后可以重新报名（团队或个人），已提交的作品不会自动撤销。确定吗？"
+        : "退出后需要重新邀请才能加入，确定吗？",
+      "退出"
+    );
+    if (!ok) return;
     try {
       await leaveTeam(team.id);
       toast("已退出队伍", "ok");
@@ -420,7 +480,7 @@ export async function workView(el) {
   if (!requireLogin(el)) return;
   const membership = await myMembership();
   if (!membership) {
-    el.innerHTML = shell(`<div class="empty"><p>你还没有加入队伍</p><a class="btn btn-primary" href="#/team" style="margin-top:10px">去组队</a></div>`);
+    el.innerHTML = shell(`<div class="empty"><p>你还没有报名</p><a class="btn btn-primary" href="#/team" style="margin-top:10px">去报名</a></div>`);
     bindShell();
     return;
   }
@@ -449,7 +509,9 @@ export async function workView(el) {
   const rules = await rulesFingerprint().catch(() => null);
   const rulesAck = rules ? await getRulesAck(rules.version).catch(() => null) : null;
 
-  const canSubmit = (editable || fixing) && members.length >= 3 && sigOk;
+  // 个人参赛不受队伍人数限制
+  const soloEntry = team?.kind === "individual";
+  const canSubmit = (editable || fixing) && (soloEntry || members.length >= 3) && sigOk;
 
   const d = sub?.detail || {};
   const l = sub?.links || {};
@@ -506,7 +568,7 @@ export async function workView(el) {
       <p class="tiny dim" style="margin:0">待签署：${unsigned.map((m) => esc(m.member_name || "未命名")).join("、")}。每位成员需各自完成签署。</p>
     </div>` : ""}
 
-    ${members.length < 3 ? `<div class="card" style="border-color:rgba(239,159,39,.35);margin-bottom:18px"><p class="small" style="margin:0;color:var(--amber)">队伍至少需要 3 人才能提交作品，当前 ${members.length} 人。</p></div>` : ""}
+    ${!soloEntry && members.length < 3 ? `<div class="card" style="border-color:rgba(239,159,39,.35);margin-bottom:18px"><p class="small" style="margin:0;color:var(--amber)">队伍至少需要 3 人才能提交作品，当前 ${members.length} 人。</p></div>` : ""}
 
     <div class="card block">
       <div class="card-head"><h2>基本信息</h2><span class="card-note">赛道由队伍决定</span></div>

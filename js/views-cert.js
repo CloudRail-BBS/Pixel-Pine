@@ -113,8 +113,12 @@ function certDocument(c, issuer, meta = {}) {
                  </div>`
               : award
               ? `<p class="cert-text">
-                   于「像素松」限时创作活动中，作为 <b>${esc(c.team_name || "参赛队伍")}</b> 成员，
-                   提交作品《<b>${esc(c.work_title)}</b>》。<br />
+                   ${
+                     c.team_kind === "individual"
+                       ? `于「像素松」限时创作活动中，以个人身份提交作品《<b>${esc(c.work_title)}</b>》。`
+                       : `于「像素松」限时创作活动中，作为 <b>${esc(c.team_name || "参赛队伍")}</b> 成员，
+                          提交作品《<b>${esc(c.work_title)}</b>》。`
+                   }<br />
                    <span class="cert-sub">赛道 ${esc(c.track)} · ${esc(track.name)}</span>
                  </p>
                  <p class="cert-text cert-text--tail">经评审委员会评定，荣获</p>
@@ -126,7 +130,9 @@ function certDocument(c, issuer, meta = {}) {
                  <div class="cert-facts">
                    <div><span>[ 赛道 ]</span><b>${esc(c.track)} · ${esc(track.name)}</b></div>
                    <div><span>[ 作品 ]</span><b>${esc(c.work_title)}</b></div>
-                   <div><span>[ 团队 ]</span><b>${esc(c.team_name || "参赛队伍")}</b></div>
+                   <div><span>[ ${c.team_kind === "individual" ? "形式" : "团队"} ]</span><b>${
+                     c.team_kind === "individual" ? "个人参赛" : esc(c.team_name || "参赛队伍")
+                   }</b></div>
                  </div>`
           }
         </div>

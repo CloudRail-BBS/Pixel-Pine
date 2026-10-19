@@ -46,13 +46,18 @@ function makeCode() {
   return out;
 }
 
-export async function createTeam({ name, track }) {
+/**
+ * 创建参赛单元。
+ * kind = "individual" 表示个人参赛：内部仍是一条 1 人队伍，
+ * 这样作品、评审、证书的关联逻辑完全不用改，只是人数校验会跳过。
+ */
+export async function createTeam({ name, track, kind = "team" }) {
   const existing = await myMembership();
   if (existing) throw new Error("你已经加入了一支队伍，每人只能加入 1 支队伍");
   const code = makeCode();
   const team = unwrap(
     await db.from("teams").insert({
-      name, track, invite_code: code,
+      name, track, invite_code: code, kind,
       owner_name: state.me?.nickname || null,
     }).select()
   )?.[0];
@@ -72,6 +77,7 @@ export async function joinTeam(code) {
     await db.from("teams").select("*").ilike("invite_code", code.trim()).maybeSingle()
   );
   if (!team) throw new Error("邀请码无效，请向队长确认");
+  if (team.kind === "individual") throw new Error("这是个人参赛，不接受其他成员加入");
   const members = await listMembers(team.id);
   if (members.length >= 5) throw new Error("该队伍已满员（上限 5 人）");
   unwrap(
@@ -466,6 +472,7 @@ export async function issueCertificates(sub, holders, awardKey, awardName) {
       submission_id: sub.id,
       team_id: sub.team_id,
       team_name: sub.team_name || null,
+      team_kind: sub.team_kind || "team",
       owner_id: h.owner_id,
       holder_name: h.name || "未命名",
       work_title: sub.title,
