@@ -152,8 +152,8 @@ export function createLocalCloud(config) {
         const j = await res.json().catch(() => ({}));
         return { data: j.data || null, error: null };
       },
-      async signInWithPassword({ email, password }) {
-        return post("/.cloud/local/auth/login", { email, password });
+      async signInWithPassword({ email, password, name }) {
+        return post("/.cloud/local/auth/login", { email, password, name });
       },
       async signOut() {
         return post("/.cloud/local/auth/logout");
@@ -167,8 +167,8 @@ export function createLocalCloud(config) {
       async sendOtp({ email }) {
         return post("/.cloud/local/auth/otp/send", { email });
       },
-      async verifyOtp({ email, verificationId, token }) {
-        return post("/.cloud/local/auth/otp/verify", { email, verificationId, code: token });
+      async verifyOtp({ email, verificationId, token, name }) {
+        return post("/.cloud/local/auth/otp/verify", { email, verificationId, code: token, name });
       },
       async resetPasswordForEmail() {
         return unavailable("邮件重置密码");

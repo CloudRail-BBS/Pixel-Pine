@@ -312,6 +312,11 @@ function otpPane() {
         <button class="btn" id="btn-send" type="button">获取验证码</button>
       </div>
     </div>
+    <div class="field" id="otp-name-wrap" style="display:none">
+      <label class="req">昵称</label>
+      <input type="text" id="f-name-o" maxlength="20" placeholder="展示给其他参赛者的昵称" autocomplete="nickname" />
+      <div class="hint">新账号需要填写昵称，会出现在队伍、作品与证书上。</div>
+    </div>
     <button class="btn btn-primary btn-block" id="btn-otp" type="button">登录 / 注册</button>
     <p class="tiny dim" style="margin-top:12px">首次登录自动创建账号，无需密码。想改用密码登录，请先走「忘记密码」设置一次。</p>`;
 }
@@ -327,11 +332,33 @@ function pwdPane() {
       <input type="password" id="f-password" placeholder="输入密码" autocomplete="current-password" />
       ${
         LOCAL_MODE
-          ? `<div class="hint">首次使用该邮箱会自动创建账号；首位注册者成为主办方。密码至少 6 位。</div>`
+          ? `<div class="hint">密码至少 6 位。还没有账号请点下方「注册」。</div>`
           : `<div class="hint"><a href="#" id="link-forgot">忘记密码，或首次设置密码</a></div>`
       }
     </div>
-    <button class="btn btn-primary btn-block" id="btn-pwd" type="button">${LOCAL_MODE ? "登录 / 注册" : "登录"}</button>`;
+    <button class="btn btn-primary btn-block" id="btn-pwd" type="button">登录</button>`;
+}
+
+/** 注册：昵称必填，作为账号的展示名写入 profiles */
+function registerPane() {
+  return `
+    <h2 style="margin-bottom:4px">创建账号</h2>
+    <p class="small muted" style="margin-bottom:18px">填写邮箱、昵称与密码。昵称会展示在队伍、作品与证书上。</p>
+    <div class="field">
+      <label class="req">邮箱</label>
+      <input type="email" id="f-email-r" placeholder="you@example.com" autocomplete="email" />
+    </div>
+    <div class="field">
+      <label class="req">昵称</label>
+      <input type="text" id="f-name-r" maxlength="20" placeholder="展示给其他参赛者的昵称" autocomplete="nickname" />
+      <div class="hint">2–20 个字，建议用常用昵称；注册后可在「我的」里修改。</div>
+    </div>
+    <div class="field">
+      <label class="req">密码</label>
+      <input type="password" id="f-password-r" placeholder="至少 8 位，含字母和数字" autocomplete="new-password" />
+    </div>
+    <button class="btn btn-primary btn-block" id="btn-register" type="button">注册</button>
+    <p class="tiny dim center" style="margin-top:14px">已有账号？<a href="#" id="link-login-back">直接登录</a></p>`;
 }
 
 function resetPane() {
@@ -372,7 +399,8 @@ function resetPane() {
 export async function loginView(el) {
   const cfg = await loadAuthCfg();
   const allowOtp = !LOCAL_MODE || Boolean(cfg.otp);
-  if (!allowOtp) loginMode = "pwd";
+  // 只在没有验证码入口时把 otp 降级为密码登录；register / reset 不能被覆盖
+  if (!allowOtp && loginMode === "otp") loginMode = "pwd";
 
   // 登录页说明由后台「内容 → 登录页说明」维护；读不到时用内置兜底
   let noteHtml = "";
@@ -391,16 +419,20 @@ export async function loginView(el) {
         ${
           resetCtx || loginMode === "reset"
             ? resetPane()
+            : loginMode === "register"
+            ? registerPane()
             : `
           ${
             LOCAL_MODE && !allowOtp
               ? `<div class="auth-tabs"><button class="on" type="button">邮箱密码登录</button></div>
-                 ${pwdPane()}`
+                 ${pwdPane()}
+                 <p class="tiny dim center" style="margin-top:14px">还没有账号？<a href="#" id="link-register">注册</a></p>`
               : `<div class="auth-tabs">
                    <button class="${loginMode === "otp" ? "on" : ""}" data-mode="otp" type="button">验证码登录</button>
                    <button class="${loginMode === "pwd" ? "on" : ""}" data-mode="pwd" type="button">密码登录</button>
                  </div>
-                 ${loginMode === "otp" ? otpPane() : pwdPane()}`
+                 ${loginMode === "otp" ? otpPane() : pwdPane()}
+                 <p class="tiny dim center" style="margin-top:14px">还没有账号？<a href="#" id="link-register">注册</a></p>`
           }
           ${
             showThirdParty
@@ -470,12 +502,26 @@ async function sendCode(btn, email) {
   }
 }
 
-async function afterLogin() {
+async function afterLogin(message = "登录成功") {
   const { loadSession } = await import("./core.js");
   await loadSession();
   await loadMe(true);
-  toast("登录成功", "ok");
+  toast(message, "ok");
   navigate("/me");
+}
+
+/**
+ * 本地模式服务端在创建账号时已写入昵称；云端模式不接受 name 参数，
+ * 这里补写一次。昵称已经一致时不会发请求。
+ */
+async function syncNickname(name) {
+  try {
+    const uid = state.session?.user?.id || state.session?.user?.uid;
+    if (!uid || !state.me) return;
+    if ((state.me.nickname || "") === name) return;
+    await db.from("profiles").update({ nickname: name }).eq("owner_id", uid);
+    await loadMe(true);
+  } catch (_) {}
 }
 
 function wireLogin(el) {
@@ -496,17 +542,42 @@ function wireLogin(el) {
     };
   }
 
+  const toRegister = el.querySelector("#link-register");
+  if (toRegister) {
+    toRegister.onclick = (e) => {
+      e.preventDefault();
+      loginMode = "register";
+      loginView(el);
+    };
+  }
+
+  const toLogin = el.querySelector("#link-login-back");
+  if (toLogin) {
+    toLogin.onclick = (e) => {
+      e.preventDefault();
+      loginMode = !LOCAL_MODE || (AUTH_CFG && AUTH_CFG.otp) ? "otp" : "pwd";
+      loginView(el);
+    };
+  }
+
   /* ---- 验证码登录 ---- */
   if (loginMode === "otp") {
     const emailEl = el.querySelector("#f-email");
     const codeEl = el.querySelector("#f-code");
     const sendBtn = el.querySelector("#btn-send");
     const loginBtn = el.querySelector("#btn-otp");
+    const nameWrap = el.querySelector("#otp-name-wrap");
+    const nameEl = el.querySelector("#f-name-o");
 
     sendBtn.onclick = async () => {
       const email = emailEl.value.trim();
       if (!EMAIL_RE.test(email)) return toast("请输入正确的邮箱地址", "err");
       pendingOtp = await sendCode(sendBtn, email);
+      if (!pendingOtp) return;
+      // 先验证码后注册的场景：只有新账号才要求填昵称
+      const isNew = pendingOtp.isExistingUser === false;
+      if (nameWrap) nameWrap.style.display = isNew ? "" : "none";
+      if (isNew && nameEl) nameEl.focus();
     };
 
     loginBtn.onclick = async () => {
@@ -514,6 +585,12 @@ function wireLogin(el) {
       const token = codeEl.value.trim();
       if (!pendingOtp || pendingOtp.email !== email) return toast("请先获取该邮箱的验证码", "err");
       if (!token) return toast("请输入验证码", "err");
+      const isNew = pendingOtp.isExistingUser === false;
+      const name = isNew ? (nameEl ? nameEl.value.trim() : "") : "";
+      if (isNew && [...name].length < 2) {
+        if (nameEl) nameEl.focus();
+        return toast("首次登录请填写昵称，至少 2 个字", "err");
+      }
       busy(loginBtn, true, "登录中…");
       try {
         const done = await cloud.auth.verifyOtp({
@@ -521,10 +598,11 @@ function wireLogin(el) {
           verificationId: pendingOtp.verificationId,
           isExistingUser: pendingOtp.isExistingUser,
           token,
+          name,
         });
         if (done.error) throw done.error;
         pendingOtp = null;
-        await afterLogin();
+        await afterLogin(isNew ? "注册成功" : "登录成功");
       } catch (e) {
         toast(errMsg(e, "验证码错误或已过期"), "err");
         busy(loginBtn, false);
@@ -567,6 +645,50 @@ function wireLogin(el) {
         loginView(el);
       };
     }
+  }
+
+  /* ---- 注册（昵称必填） ---- */
+  if (loginMode === "register") {
+    const emailEl = el.querySelector("#f-email-r");
+    const nameEl = el.querySelector("#f-name-r");
+    const pwdEl = el.querySelector("#f-password-r");
+    const btn = el.querySelector("#btn-register");
+
+    btn.onclick = async () => {
+      const email = emailEl.value.trim();
+      const name = nameEl.value.trim();
+      const password = pwdEl.value;
+      if (!EMAIL_RE.test(email)) return toast("请输入正确的邮箱地址", "err");
+      if ([...name].length < 2) return toast("请填写昵称，至少 2 个字", "err");
+      if ([...name].length > 20) return toast("昵称不能超过 20 个字", "err");
+      if (!pwdOk(password)) return toast("密码至少 8 位，且同时包含字母和数字", "err");
+
+      busy(btn, true, "注册中…");
+      try {
+        const res = await cloud.auth.signInWithPassword({ email, password, name });
+        if (res.error) throw res.error;
+        // 本地模式会返回 isNew；云端模式没有这个字段，一律按新账号继续
+        if (res.data && res.data.isNew === false) {
+          toast("该邮箱已注册，请直接登录", "err");
+          busy(btn, false);
+          return;
+        }
+        await afterLogin("注册成功");
+        syncNickname(name);
+      } catch (e) {
+        toast(errMsg(e, "注册失败，请稍后重试"), "err");
+        busy(btn, false);
+      }
+    };
+
+    const fields = [emailEl, nameEl, pwdEl];
+    fields.forEach((input, i) => {
+      input.onkeydown = (e) => {
+        if (e.key !== "Enter") return;
+        if (i < fields.length - 1) fields[i + 1].focus();
+        else btn.click();
+      };
+    });
   }
 
   /* ---- 重置 / 设置密码 ---- */

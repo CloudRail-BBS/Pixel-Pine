@@ -603,7 +603,7 @@ function otpAllowed(key) {
   return true;
 }
 
-function ensureUser(email) {
+function ensureUser(email, nickname) {
   let user = rows("users").find((u) => u.email === email);
   if (user) {
     const profile = rows("profiles").find((p) => p.owner_id === user.uid) || {};
@@ -621,11 +621,13 @@ function ensureUser(email) {
   };
   rows("users").push(user);
   const isFirst = rows("profiles").length === 0;
+  // 注册时要求填写昵称；老路径（验证码首次登录）没传就退回邮箱前缀
+  const clean = String(nickname || "").trim().slice(0, 20);
   const profile = {
     id: nextId("profiles"),
     owner_id: uid,
     email,
-    nickname: email.split("@")[0].slice(0, 20),
+    nickname: clean || email.split("@")[0].slice(0, 20),
     role: isFirst ? "admin" : "participant",
     looking_for_team: false,
     created_at: nowIso(),
@@ -695,6 +697,11 @@ async function verifyOtp(req, res) {
   const email = String(body.email || "").trim().toLowerCase();
   const id = String(body.verificationId || "");
   const code = String(body.code || "").trim();
+  const name = Array.from(String(body.name || "").trim()).slice(0, 20).join("");
+  // 新账号（验证码首次登录）同样必须填昵称
+  if (!rows("users").some((u) => u.email === email) && Array.from(name).length < 2) {
+    return sendJson(res, 400, { error: { message: "首次登录请先填写昵称" } });
+  }
   const rec = (db.otp || []).find((o) => o.id === id && o.email === email);
   if (!rec || rec.used) return sendJson(res, 400, { error: { message: "验证码已失效，请重新获取" } });
   if (new Date(rec.exp).getTime() < Date.now()) {
@@ -708,10 +715,12 @@ async function verifyOtp(req, res) {
     return sendJson(res, 400, { error: { message: "验证码错误" } });
   }
   rec.used = true;
-  const { uid, profile } = ensureUser(email);
+  const { uid, profile, created } = ensureUser(email, body.name);
   createSession(res, uid, req);
   save(true);
-  return sendJson(res, 200, { data: { user: { id: uid, email }, role: profile.role || "participant" } });
+  return sendJson(res, 200, {
+    data: { user: { id: uid, email }, role: profile.role || "participant", isNew: created },
+  });
 }
 
 /* ------------------------------ 认证 ------------------------------ */
@@ -745,20 +754,27 @@ async function handleAuth(req, res, url) {
     const body = await readJson(req);
     const email = String(body.email || "").trim().toLowerCase();
     const password = String(body.password || "");
+    const name = Array.from(String(body.name || "").trim()).slice(0, 20).join("");
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
       return sendJson(res, 400, { error: { message: "邮箱格式不正确" } });
     }
     if (password.length < 6) return sendJson(res, 400, { error: { message: "密码至少 6 位" } });
 
     let user = rows("users").find((u) => u.email === email);
+    let isNew = false;
     if (user && !user.password_hash) {
       // 先用验证码注册、尚未设密码：首次用密码登录即设置密码
       user.salt = crypto.randomBytes(16).toString("hex");
       user.password_hash = scrypt(password, user.salt);
       save();
     } else if (!user) {
-      const created = ensureUser(email);
+      // 注册必须带昵称：不再用邮箱前缀兜底，避免出现一堆「abc123」这样的账号
+      if (Array.from(name).length < 2) {
+        return sendJson(res, 400, { error: { message: "请先注册并填写昵称" } });
+      }
+      const created = ensureUser(email, name);
       user = created.user;
+      isNew = created.created;
       user.salt = crypto.randomBytes(16).toString("hex");
       user.password_hash = scrypt(password, user.salt);
     } else if (!safeEqual(scrypt(password, user.salt), user.password_hash)) {
@@ -768,7 +784,7 @@ async function handleAuth(req, res, url) {
     createSession(res, user.uid, req);
     const profile = rows("profiles").find((p) => p.owner_id === user.uid) || {};
     return sendJson(res, 200, {
-      data: { user: { id: user.uid, email }, role: profile.role || "participant" },
+      data: { user: { id: user.uid, email }, role: profile.role || "participant", isNew },
     });
   }
 
