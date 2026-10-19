@@ -20,6 +20,8 @@ const TABLES = [
   "signatures", "documents", "partners", "judges", "certificates",
 ];
 const PUBLIC_READ = new Set(["activity", "documents", "partners", "announcements", "judges", "certificates"]);
+// 未登录也能查，但只能看到 status='public' 的行
+const ANON_READ = new Set([...PUBLIC_READ, "submissions"]);
 const SESSION_TTL = 30 * 24 * 3600; // 秒
 const MAX_FILE = 200 * 1024 * 1024;
 
@@ -254,7 +256,7 @@ function clearSession(req, res) {
 /* ------------------------------ 权限 ------------------------------ */
 
 function canRead(ctx, table, row) {
-  if (!ctx) return PUBLIC_READ.has(table);
+  if (!ctx) return PUBLIC_READ.has(table) || (table === "submissions" && row.status === "public");
   switch (table) {
     case "profiles":
       return true;
@@ -363,7 +365,7 @@ async function handleDb(req, res, ctx) {
   const columns = body.columns || "*";
 
   if (action === "select") {
-    if (!PUBLIC_READ.has(table) && !ctx) {
+    if (!ANON_READ.has(table) && !ctx) {
       return sendJson(res, 401, { error: { code: "42501", message: "请先登录" } });
     }
     let list = applyFilters(rows(table), filters).filter((r) => canRead(ctx, table, r));
