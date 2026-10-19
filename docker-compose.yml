@@ -12,12 +12,18 @@ services:
       # 默认指向已发布的云服务，因此容器起来就能登录、读写数据，无需改代码。
       PS_UPSTREAM: ${PS_UPSTREAM-https://pixelsong.app.workbuddy.host}
       PS_ENDPOINT: ${PS_ENDPOINT:-}
+      PS_UPSTREAM_HOST: ${PS_UPSTREAM_HOST:-}
+      PS_TLS_INSECURE: ${PS_TLS_INSECURE:-}
       GEETEST_CAPTCHA_ID: ${GEETEST_CAPTCHA_ID:-}
       GEETEST_CAPTCHA_KEY: ${GEETEST_CAPTCHA_KEY:-}
       CNKD_CLIENT_ID: ${CNKD_CLIENT_ID:-}
       CNKD_CLIENT_SECRET: ${CNKD_CLIENT_SECRET:-}
       CNKD_REDIRECT_URI: ${CNKD_REDIRECT_URI:-}
       VT_API_KEY: ${VT_API_KEY:-}
+    # 服务器 DNS 被污染、或被代理软件的 fake-ip（198.18.x.x）接管时，固定公共 DNS
+    # dns:
+    #   - 223.5.5.5
+    #   - 119.29.29.29
     logging:
       driver: json-file
       options:

@@ -55,6 +55,10 @@ const PS_ENDPOINT = String(process.env.PS_ENDPOINT || "").trim().replace(/\/+$/,
 const PS_PUBLISHABLE_KEY =
   process.env.PS_PUBLISHABLE_KEY ||
   "wbpk_ASDGMaTrV7dAuvQijziP8z_1cmrp1ZytZS54tR74qrBdBG6NGJrS6c0";
+// 走 IP / 私有 DNS 时用域名做 SNI 与 Host
+const PS_UPSTREAM_HOST = String(process.env.PS_UPSTREAM_HOST || "").trim();
+// 公司网络做 TLS 拦截时，Node 不认自签根证书；置 1 跳过校验（仅建议内网使用）
+const PS_TLS_INSECURE = /^(1|true|yes)$/i.test(String(process.env.PS_TLS_INSECURE || ""));
 
 /**
  * 决定这次请求的数据面走向。
@@ -323,10 +327,11 @@ function proxyCloud(req, res, upstream) {
         ` · ${req.method} ${req.url}`
     );
   }
-  headers["x-forwarded-host"] = req.headers.host || "";
+  if (req.headers.host) headers["x-forwarded-host"] = req.headers.host;
   headers["x-forwarded-proto"] =
     (req.headers["x-forwarded-proto"] || "").split(",")[0].trim() ||
     (req.socket.encrypted ? "https" : "http");
+  if (PS_UPSTREAM_HOST) headers.host = PS_UPSTREAM_HOST;
 
   const upReq = lib.request(
     {
@@ -337,6 +342,12 @@ function proxyCloud(req, res, upstream) {
       method: req.method,
       headers,
       timeout: 120000,
+      ...(isHttps
+        ? {
+            servername: PS_UPSTREAM_HOST || target.hostname,
+            rejectUnauthorized: !PS_TLS_INSECURE,
+          }
+        : {}),
     },
     (upRes) => {
       const out = Object.assign({}, upRes.headers);
@@ -356,11 +367,81 @@ function proxyCloud(req, res, upstream) {
 
   upReq.on("timeout", () => upReq.destroy(new Error("upstream_timeout")));
   upReq.on("error", (err) => {
+    console.error(
+      `[proxy] 上游不可达 ${target.origin}${target.pathname} · ${err.code || ""} ${err.message}`
+    );
     if (res.headersSent) return res.destroy();
-    sendJson(res, 502, { error: "upstream_unreachable", message: err.message });
+    sendJson(res, 502, {
+      error: "upstream_unreachable",
+      code: err.code || null,
+      message: err.message,
+      upstream: target.origin,
+    });
   });
   req.pipe(upReq);
 }
+
+/** 自检：从这台服务器能否连上数据面。返回 DNS、耗时与具体错误码 */
+function upstreamProbe() {
+  const base = PS_UPSTREAM || PS_ENDPOINT || DEFAULT_ENDPOINT;
+  let target;
+  try {
+    target = new URL(base);
+  } catch (_) {
+    return Promise.resolve({ ok: false, error: "bad_upstream", upstream: base });
+  }
+  const isHttps = target.protocol === "https:";
+  const lib = isHttps ? require("https") : require("http");
+  const started = Date.now();
+
+  return new Promise((resolve) => {
+    const req = lib.request(
+      {
+        protocol: target.protocol,
+        hostname: target.hostname,
+        port: target.port || (isHttps ? 443 : 80),
+        path: "/api/health",
+        method: "GET",
+        timeout: 8000,
+        ...(isHttps
+          ? {
+              servername: PS_UPSTREAM_HOST || target.hostname,
+              rejectUnauthorized: !PS_TLS_INSECURE,
+            }
+          : {}),
+        headers: PS_UPSTREAM_HOST ? { host: PS_UPSTREAM_HOST } : {},
+      },
+      (res) => {
+        let body = "";
+        res.on("data", (c) => {
+          if (body.length < 400) body += c;
+        });
+        res.on("end", () =>
+          resolve({
+            ok: res.statusCode === 200,
+            status: res.statusCode,
+            ms: Date.now() - started,
+            upstream: base,
+            body: body.slice(0, 200),
+          })
+        );
+      }
+    );
+    req.on("timeout", () => req.destroy(new Error("timeout")));
+    req.on("error", (e) =>
+      resolve({
+        ok: false,
+        upstream: base,
+        ms: Date.now() - started,
+        code: e.code || null,
+        error: e.message,
+      })
+    );
+    req.end();
+  });
+}
+
+const diagAt = new Map();
 
 function serveStatic(req, res) {
   let pathname;
@@ -458,6 +539,34 @@ const server = http.createServer({ maxHeaderSize: 64 * 1024 }, async (req, res) 
         mode: PS_UPSTREAM ? "proxy" : PS_ENDPOINT ? "direct" : "auto",
         upstream: PS_UPSTREAM || PS_ENDPOINT || DEFAULT_ENDPOINT,
       },
+    });
+  }
+
+  if (url.pathname === "/api/diag") {
+    const ip =
+      (req.headers["x-forwarded-for"] || "").split(",")[0].trim() ||
+      req.socket.remoteAddress ||
+      "unknown";
+    const last = diagAt.get(ip) || 0;
+    if (Date.now() - last < 3000) return sendJson(res, 429, { ok: false, error: "too_frequent" });
+    diagAt.set(ip, Date.now());
+
+    const base = PS_UPSTREAM || PS_ENDPOINT || DEFAULT_ENDPOINT;
+    let dns = [];
+    try {
+      const host = new URL(base).hostname;
+      const rows = await require("dns").promises.lookup(host, { all: true });
+      dns = rows.map((r) => `${r.address} (IPv${r.family})`);
+    } catch (e) {
+      dns = [`lookup_failed ${e.code || e.message}`];
+    }
+    const probe = await upstreamProbe();
+    return sendJson(res, 200, {
+      ...probe,
+      dns,
+      tlsInsecure: PS_TLS_INSECURE,
+      upstreamHost: PS_UPSTREAM_HOST || null,
+      mode: PS_UPSTREAM ? "proxy" : PS_ENDPOINT ? "direct" : "auto",
     });
   }
 

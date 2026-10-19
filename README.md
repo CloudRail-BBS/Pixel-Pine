@@ -148,6 +148,26 @@ server {
 
 当前走向可以直接查：`curl http://localhost:3000/api/health`，看 `dataPlane` 字段。
 
+### 容器连不上数据面怎么办
+
+浏览器能打开主站、容器却报 `502 upstream_unreachable`，说明**服务器出网**有问题（DNS 污染、TLS 拦截、防火墙），不是应用代码。
+
+打开一个地址就能定位：
+
+```
+http://你的服务器:3000/api/diag
+```
+
+它返回 DNS 解析结果、连接耗时、HTTP 状态与具体错误码：
+
+| 返回 | 含义 | 处理 |
+|---|---|---|
+| `"ok": true` | 容器能连上数据面 | 502 是偶发，重试 |
+| `"code": "ENOTFOUND"` | DNS 解析失败 | 换 DNS，或用 `PS_UPSTREAM` 填可达 IP + `PS_UPSTREAM_HOST` 填域名 |
+| `"code": "CERT_..."` / `UNABLE_TO_VERIFY_LEAF_SIGNATURE` | TLS 被中间设备替换 | 配 `NODE_EXTRA_CA_CERTS` 指向企业根证书；内网可临时 `PS_TLS_INSECURE=1` |
+| `"code": "ETIMEDOUT"` / `ECONNREFUSED` | 出网被拦 | 放行该域名 443，或让服务器走代理 |
+| `dns` 里是 `198.18.x.x` | 被代理软件 fake-ip 接管 | 容器内没有该代理，改用真实 DNS |
+
 ### 默认与主站共用数据
 
 不配 `PS_UPSTREAM` 时，自托管站点连的是**已发布的那套数据库**：你在自建站点注册的账号在主站也能登录，作品、队伍、评分都是同一份。
