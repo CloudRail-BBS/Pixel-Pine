@@ -6,23 +6,41 @@
  */
 
 const jsonHeaders = { "content-type": "application/json" };
+const REQUEST_TIMEOUT = 15000;
 
 async function post(path, body) {
-  const res = await fetch(path, {
-    method: "POST",
-    headers: jsonHeaders,
-    body: JSON.stringify(body || {}),
-    credentials: "same-origin",
-  });
-  let payload = null;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT);
   try {
-    payload = await res.json();
-  } catch (_) {}
-  if (!res.ok) {
-    const err = (payload && payload.error) || {};
-    return { data: null, error: { code: err.code || String(res.status), message: err.message || "请求失败", status: res.status } };
+    const res = await fetch(path, {
+      method: "POST",
+      headers: jsonHeaders,
+      body: JSON.stringify(body || {}),
+      credentials: "same-origin",
+      signal: controller.signal,
+    });
+    let payload = null;
+    try {
+      payload = await res.json();
+    } catch (_) {}
+    if (!res.ok) {
+      const err = (payload && payload.error) || {};
+      return { data: null, error: { code: err.code || String(res.status), message: err.message || "请求失败", status: res.status } };
+    }
+    return { data: payload ? payload.data : null, error: null };
+  } catch (e) {
+    const aborted = e && e.name === "AbortError";
+    return {
+      data: null,
+      error: {
+        code: aborted ? "timeout" : "network",
+        message: aborted ? "请求超时，服务器没有响应" : "网络异常，无法连接服务器",
+        status: 0,
+      },
+    };
+  } finally {
+    clearTimeout(timer);
   }
-  return { data: payload ? payload.data : null, error: null };
 }
 
 function builder(table) {

@@ -424,32 +424,49 @@ export async function loginView(el) {
   wireLogin(el);
 }
 
-async function sendCode(btn, email, codeInput) {
+/** 发送冷却：自己维护文案与禁用态，别和 busy() 抢 dataset.label */
+function startCooldown(btn, seconds = 60) {
+  if (!btn) return;
+  if (!btn.dataset.label) btn.dataset.label = "获取验证码";
+  btn.disabled = true;
+  let left = seconds;
+  btn.textContent = `${left}s 后重发`;
+  const tick = setInterval(() => {
+    left -= 1;
+    if (left > 0) {
+      btn.textContent = `${left}s 后重发`;
+    } else {
+      clearInterval(tick);
+      btn.textContent = "重新获取";
+      btn.disabled = false;
+      delete btn.dataset.label;
+    }
+  }, 1000);
+}
+
+async function sendCode(btn, email) {
   busy(btn, true, "验证中…");
-  const gate = await verifyCaptcha();
-  if (!gate.ok) {
-    busy(btn, false);
-    if (gate.reason) toast(gate.reason, "err");
-    return null;
-  }
-  busy(btn, true, "发送中…");
+  let counting = false;
   try {
+    // 用登录页已经取到的配置：未开启人机验证时零请求直接放行
+    const gate = await verifyCaptcha(AUTH_CFG && AUTH_CFG.captcha);
+    if (!gate.ok) {
+      if (gate.reason) toast(gate.reason, "err");
+      return null;
+    }
+    busy(btn, true, "发送中…");
     const sent = await cloud.auth.sendOtp({ email });
     if (sent.error) throw sent.error;
     toast("验证码已发送，请查收邮箱", "ok");
-    let left = 60;
-    const tick = setInterval(() => {
-      left--;
-      btn.textContent = left > 0 ? `${left}s 后重发` : "重新获取";
-      btn.disabled = left > 0;
-      if (left <= 0) clearInterval(tick);
-    }, 1000);
+    counting = true;
+    startCooldown(btn);
     return { email, verificationId: sent.data.verificationId, isExistingUser: sent.data.isExistingUser };
   } catch (e) {
     toast(errMsg(e, "验证码发送失败"), "err");
     return null;
   } finally {
-    busy(btn, false);
+    // 进入冷却时按钮交给 startCooldown 管，别在这里恢复成可点
+    if (!counting) busy(btn, false);
   }
 }
 
@@ -561,14 +578,13 @@ function wireLogin(el) {
         const email = emailEl.value.trim();
         if (!EMAIL_RE.test(email)) return toast("请输入正确的邮箱地址", "err");
         busy(sendBtn, true, "验证中…");
-        const gate = await verifyCaptcha();
-        if (!gate.ok) {
-          busy(sendBtn, false);
-          if (gate.reason) toast(gate.reason, "err");
-          return;
-        }
-        busy(sendBtn, true, "发送中…");
         try {
+          const gate = await verifyCaptcha(AUTH_CFG && AUTH_CFG.captcha);
+          if (!gate.ok) {
+            if (gate.reason) toast(gate.reason, "err");
+            return;
+          }
+          busy(sendBtn, true, "发送中…");
           const started = await cloud.auth.resetPasswordForEmail(email);
           if (started.error) throw started.error;
           resetCtx = { email, handle: started.data };
@@ -576,6 +592,7 @@ function wireLogin(el) {
           loginView(el);
         } catch (e) {
           toast(errMsg(e, "发送失败，请确认邮箱是否已注册"), "err");
+        } finally {
           busy(sendBtn, false);
         }
       };

@@ -637,7 +637,7 @@ const server = http.createServer({ maxHeaderSize: 64 * 1024 }, async (req, res) 
     return sendJson(res, 200, {
       mode: LOCAL_MODE ? "local" : "cloud",
       otp: LOCAL_MODE ? smtpOn : true,
-      captcha: { enabled: g.enabled, provider: "geetest" },
+      captcha: { enabled: g.enabled, provider: "geetest", captchaId: g.id || null },
       cnkd: { enabled: c.enabled },
     });
   }

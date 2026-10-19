@@ -1,7 +1,30 @@
 const GT_SRC = "https://static.geetest.com/v4/gt4.js";
 
+// 每一段都必须有上限，否则网络半开时会永远停在「验证中…」
+const CFG_TIMEOUT = 5000; // 读后端配置
+const SCRIPT_TIMEOUT = 8000; // 拉极验脚本
+const INIT_TIMEOUT = 8000; // 组件就绪（不弹窗基本就是配置或网络问题）
+const POPUP_TIMEOUT = 4000; // 回调之后弹窗必须真的出现
+const SOLVE_TIMEOUT = 60000; // 留给用户完成拼图
+const VALIDATE_TIMEOUT = 10000; // 服务端二次校验
+
 let scriptPromise = null;
 let cfgCache = null;
+
+/** 极验的节点都带 geetest 前缀；用实际尺寸排除仅注入但不显示的占位节点 */
+function geetestPopupVisible() {
+  for (const n of document.querySelectorAll('[class*="geetest"], [id*="geetest"]')) {
+    const r = n.getBoundingClientRect();
+    if (r.width > 40 && r.height > 40 && getComputedStyle(n).visibility !== "hidden") return true;
+  }
+  return false;
+}
+
+function timeoutFetch(url, ms, opts) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), ms);
+  return fetch(url, { ...(opts || {}), signal: controller.signal }).finally(() => clearTimeout(timer));
+}
 
 async function loadScript() {
   if (window.initGeetest4) return true;
@@ -10,10 +33,18 @@ async function loadScript() {
     const s = document.createElement("script");
     s.src = GT_SRC;
     s.async = true;
-    s.onload = () => resolve(true);
-    s.onerror = () => {
+    const timer = setTimeout(() => {
       scriptPromise = null;
-      reject(new Error("极验脚本加载失败"));
+      reject(new Error("极验脚本加载超时，请检查网络或关闭拦截插件"));
+    }, SCRIPT_TIMEOUT);
+    s.onload = () => {
+      clearTimeout(timer);
+      resolve(true);
+    };
+    s.onerror = () => {
+      clearTimeout(timer);
+      scriptPromise = null;
+      reject(new Error("极验脚本加载失败，请检查网络或关闭拦截插件"));
     };
     document.head.appendChild(s);
   });
@@ -23,11 +54,14 @@ async function loadScript() {
 export async function getConfig() {
   if (cfgCache) return cfgCache;
   try {
-    const r = await fetch("/api/geetest/config", { headers: { accept: "application/json" } });
+    const r = await timeoutFetch("/api/geetest/config", CFG_TIMEOUT, {
+      headers: { accept: "application/json" },
+    });
     if (!r.ok) throw new Error("bad status");
     const j = await r.json();
     cfgCache = { enabled: !!j.enabled, captchaId: j.captchaId || null };
   } catch (_) {
+    // 读不到配置就按未启用处理：真正的把关在服务端 /api/geetest/validate
     cfgCache = { enabled: false, captchaId: null };
   }
   return cfgCache;
@@ -40,49 +74,87 @@ export async function geetestEnabled() {
 
 /**
  * 走一次极验，并把凭证交给服务端二次校验。
- * 服务端未配置时直接放行（降级），由邮箱验证码自身的频率限制兜底。
+ *
+ * 任何一步失败或超时都返回 { ok:false, reason }，不会挂起；
+ * 服务端未配置时直接放行（降级），由验证码自身的频率限制兜底。
+ *
+ * @param {{enabled:boolean, captchaId?:string}} [prefetched]
+ *        登录页已经从 /api/auth/config 拿到的配置。传了就省掉一次请求，
+ *        未启用时零延迟放行。
  */
-export function verifyCaptcha(timeoutMs = 120000) {
-  return new Promise(async (resolve) => {
+export async function verifyCaptcha(prefetched) {
+  let enabled = null;
+  let captchaId = null;
+  if (prefetched && typeof prefetched === "object" && typeof prefetched.enabled === "boolean") {
+    enabled = prefetched.enabled;
+    captchaId = prefetched.captchaId || null;
+  } else {
+    const cfg = await getConfig();
+    enabled = cfg.enabled;
+    captchaId = cfg.captchaId;
+  }
+
+  if (!enabled) return { ok: true, skipped: true };
+  if (!captchaId) {
     const cfg = await getConfig();
     if (!cfg.enabled || !cfg.captchaId) {
-      resolve({ ok: true, skipped: true });
-      return;
+      return { ok: false, reason: "人机验证配置不完整，请联系主办方检查 Captcha ID" };
     }
-    try {
-      await loadScript();
-    } catch (e) {
-      resolve({ ok: false, reason: "极验脚本未能加载，请检查网络或关闭拦截插件" });
-      return;
-    }
-    if (typeof window.initGeetest4 !== "function") {
-      resolve({ ok: false, reason: "极验组件不可用" });
-      return;
-    }
+    captchaId = cfg.captchaId;
+  }
 
+  try {
+    await loadScript();
+  } catch (e) {
+    return { ok: false, reason: e.message || "极验脚本未能加载" };
+  }
+  if (typeof window.initGeetest4 !== "function") {
+    return { ok: false, reason: "极验组件不可用，请刷新页面后重试" };
+  }
+
+  return new Promise((resolve) => {
     let settled = false;
-    const finish = (r) => {
+    let inited = false;
+    let solveTimer = null;
+    let popupTimer = null;
+
+    const finish = (result) => {
       if (settled) return;
       settled = true;
-      clearTimeout(timer);
-      resolve(r);
+      clearTimeout(initTimer);
+      clearTimeout(solveTimer);
+      if (popupTimer) clearInterval(popupTimer);
+      resolve(result);
     };
-    const timer = setTimeout(() => finish({ ok: false, reason: "验证超时，请重试" }), timeoutMs);
+
+    // 组件迟迟不回调，说明 Captcha ID / 域名白名单 / 网络有问题，直接给出可读提示
+    const initTimer = setTimeout(() => {
+      if (!inited) {
+        finish({
+          ok: false,
+          reason: "人机验证组件未就绪，请确认极验 Captcha ID 与域名白名单配置正确",
+        });
+      }
+    }, INIT_TIMEOUT);
 
     try {
       window.initGeetest4(
         {
-          captchaId: cfg.captchaId,
+          captchaId,
           product: "popup",
           language: "zho",
           hideBar: ["close"],
         },
         (captcha) => {
+          inited = true;
+          clearTimeout(initTimer);
+          solveTimer = setTimeout(() => finish({ ok: false, reason: "人机验证超时，请重试" }), SOLVE_TIMEOUT);
+
           captcha.onSuccess(async () => {
             const v = captcha.getValidate && captcha.getValidate();
-            if (!v) return finish({ ok: false, reason: "未取得验证凭证" });
+            if (!v) return finish({ ok: false, reason: "未取得验证凭证，请重试" });
             try {
-              const r = await fetch("/api/geetest/validate", {
+              const r = await timeoutFetch("/api/geetest/validate", VALIDATE_TIMEOUT, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
@@ -94,20 +166,51 @@ export function verifyCaptcha(timeoutMs = 120000) {
               });
               const j = await r.json();
               if (j && j.ok) return finish({ ok: true });
-              finish({ ok: false, reason: j.reason === "not_configured" ? "" : "人机验证未通过，请重试" });
+              finish({
+                ok: false,
+                reason: j.reason === "not_configured" ? "" : "人机验证未通过，请重试",
+              });
             } catch (_) {
               finish({ ok: false, reason: "校验请求失败，请检查网络" });
             }
           });
+
           captcha.onError(() => finish({ ok: false, reason: "验证出错，请刷新后重试" }));
           captcha.onClose(() => finish({ ok: false, reason: "已取消人机验证" }));
-          if (typeof captcha.showCaptcha === "function") captcha.showCaptcha();
-          else if (typeof captcha.showBox === "function") captcha.showBox();
-          else if (typeof captcha.verify === "function") captcha.verify();
+
+          try {
+            if (typeof captcha.showCaptcha === "function") captcha.showCaptcha();
+            else if (typeof captcha.showBox === "function") captcha.showBox();
+            else if (typeof captcha.verify === "function") captcha.verify();
+          } catch (_) {
+            return finish({ ok: false, reason: "无法打开人机验证弹窗，请刷新后重试" });
+          }
+
+          // 配置不对时 showCaptcha 不报错、弹窗却根本不渲染，这里短轮询确认一次
+          const popupStart = Date.now();
+          popupTimer = setInterval(() => {
+            if (settled) {
+              clearInterval(popupTimer);
+              return;
+            }
+            if (geetestPopupVisible()) {
+              clearInterval(popupTimer);
+              popupTimer = null;
+              return;
+            }
+            if (Date.now() - popupStart > POPUP_TIMEOUT) {
+              clearInterval(popupTimer);
+              popupTimer = null;
+              finish({
+                ok: false,
+                reason: "人机验证没有弹出，请检查极验 Captcha ID 与域名白名单",
+              });
+            }
+          }, 400);
         }
       );
-    } catch (e) {
-      finish({ ok: false, reason: "极验初始化失败" });
+    } catch (_) {
+      finish({ ok: false, reason: "极验初始化失败，请刷新后重试" });
     }
   });
 }
