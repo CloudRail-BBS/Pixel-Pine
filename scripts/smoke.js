@@ -63,6 +63,12 @@ const get = (p) => fetch(BASE + p, { redirect: "manual" });
     return { ok, detail: mode };
   });
 
+  await probe("登录方式配置", async () => {
+    const r = await get("/api/auth/config");
+    const j = await r.json();
+    return { ok: typeof j.otp === "boolean", detail: `otp=${j.otp} captcha=${j.captcha && j.captcha.enabled}` };
+  });
+
   await probe("健康检查", async () => {
     const r = await get("/api/health");
     const j = await r.json();

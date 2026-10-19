@@ -8,6 +8,7 @@ ENV NODE_ENV=production
 COPY package.json ./
 COPY server.js ./
 COPY local.js ./
+COPY mailer.js ./
 COPY index.html ./
 COPY css ./css
 COPY js ./js

@@ -697,3 +697,34 @@ export async function getIntro() {
   if (!doc) return null;
   return { ...doc, first: plainFirst(doc.body) };
 }
+
+/* ---------------- 站点设置（仅本地模式） ---------------- */
+
+async function settingsCall(path, body) {
+  const r = await fetch(path, {
+    method: body === undefined ? "GET" : "POST",
+    headers: { "content-type": "application/json" },
+    credentials: "same-origin",
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw (j && j.error) || new Error("设置请求失败");
+  return j.data;
+}
+
+export async function getSiteSettings() {
+  return settingsCall("/.cloud/local/settings");
+}
+
+export async function saveSiteSettings(patch) {
+  return settingsCall("/.cloud/local/settings", patch);
+}
+
+export async function sendTestMail(to) {
+  return settingsCall("/.cloud/local/settings/test-mail", { to });
+}
+
+export async function authConfig() {
+  const r = await fetch("/api/auth/config", { headers: { accept: "application/json" } });
+  return r.json();
+}

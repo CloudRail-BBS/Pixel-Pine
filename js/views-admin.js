@@ -11,6 +11,7 @@ import {
   listCertificates, issueCertificates, revokeCertificate,
   listPartners, savePartner, deletePartner,
   listJudgesAll, saveJudge, deleteJudge, getIntro, plainFirst,
+  getSiteSettings, saveSiteSettings, sendTestMail, authConfig,
 } from "./api.js";
 
 const val = (root, sel) => (root.querySelector(sel)?.value || "").trim();
@@ -27,6 +28,7 @@ const TABS = [
   { key: "notices", label: "公告" },
   { key: "content", label: "内容" },
   { key: "partners", label: "单位" },
+  { key: "settings", label: "设置" },
   { key: "appeals", label: "申诉" },
   { key: "system", label: "系统" },
 ];
@@ -56,7 +58,7 @@ export async function adminView(el, path) {
 
   const tab = (path || "").split("/")[2] || "overview";
 
-  const [teams, subs, reviews, notices, appeals, profiles, members, sigs, docs, certs, partners, judgeList, intro, health] = await Promise.all([
+  const [teams, subs, reviews, notices, appeals, profiles, members, sigs, docs, certs, partners, judgeList, intro, health, siteCfg, authCfg] = await Promise.all([
     listTeams().catch(() => []),
     allSubmissions().catch(() => []),
     allReviews().catch(() => []),
@@ -71,6 +73,8 @@ export async function adminView(el, path) {
     listJudgesAll().catch(() => []),
     getIntro().catch(() => null),
     fetch("/api/health").then((r) => r.json()).catch(() => null),
+    getSiteSettings().catch(() => null),
+    authConfig().catch(() => null),
   ]);
 
   const reviewed = reviews.filter((r) => r.status === "submitted");
@@ -90,6 +94,7 @@ export async function adminView(el, path) {
       case "notices": return noticesTab(notices);
       case "content": return contentTab(docs);
       case "partners": return partnersTab(partners);
+      case "settings": return settingsTab(siteCfg, authCfg);
       case "appeals": return appealsTab(appeals);
       case "system": return systemTab(health, profiles);
       default: return overviewTab({ teams, subs, reviews, counts, reviewed, pendingAppeals, pendingTeams, pendingWorks, health, members, profiles, sigs, intro });
@@ -808,6 +813,133 @@ function certsTab(subs, teams, members, certs) {
     </div>`;
 }
 
+/* ------------------------------ 站点设置 ------------------------------ */
+
+function secretHint(has, text) {
+  return has
+    ? `<div class="hint">已保存。留空表示不修改；勾选右侧「清除」可删除。</div>`
+    : `<div class="hint">${text}</div>`;
+}
+
+function settingsTab(cfg, auth) {
+  const mode = (auth && auth.mode) || (cfg ? "local" : "cloud");
+  if (mode !== "local" || !cfg) {
+    return `
+      <div class="card block">
+        <div class="card-head"><h2>站点设置</h2><span class="card-note">云端模式</span></div>
+        <p class="small muted" style="margin:0">当前实例连接托管云服务，邮件、人机验证与病毒扫描由环境变量配置。切到 <span class="mono">PS_MODE=local</span> 后，这些项会出现在这里。</p>
+      </div>`;
+  }
+
+  const smtp = cfg.smtp || {};
+  const gt = cfg.geetest || {};
+  const vt = cfg.virustotal || {};
+
+  return `
+    <div class="card block">
+      <div class="card-head">
+        <h2>邮箱服务（SMTP）</h2>
+        <span class="card-note">${smtp.enabled ? "已开启" : "未开启"}</span>
+      </div>
+      <p class="small muted" style="margin-bottom:16px">
+        开启后登录页会出现「验证码登录」，注册与找回密码都走邮件。填写邮箱服务商提供的 SMTP 地址与授权码即可，不需要额外部署邮件服务器。
+      </p>
+
+      <label class="row" style="gap:9px;cursor:pointer;margin-bottom:16px">
+        <input type="checkbox" id="st-enabled" ${smtp.enabled ? "checked" : ""} />
+        <span class="small">开启邮箱验证码登录</span>
+      </label>
+
+      <div class="grid grid-2">
+        <div class="field"><label>SMTP 服务器</label>
+          <input id="st-host" value="${esc(smtp.host || "")}" placeholder="smtp.example.com" /></div>
+        <div class="field"><label>端口</label>
+          <input id="st-port" type="number" value="${esc(String(smtp.port || 465))}" placeholder="465 / 587" /></div>
+      </div>
+      <div class="grid grid-2">
+        <div class="field"><label>账号</label>
+          <input id="st-user" value="${esc(smtp.user || "")}" placeholder="noreply@example.com" autocomplete="off" /></div>
+        <div class="field"><label>密码 / 授权码</label>
+          <input id="st-pass" type="password" placeholder="${smtp.hasPass ? "已保存，留空不修改" : "邮箱授权码"}" autocomplete="new-password" />
+          ${secretHint(smtp.hasPass, "不是登录密码，是邮箱服务商生成的 SMTP 授权码")}
+        </div>
+      </div>
+      <div class="row row-wrap" style="gap:18px;margin-bottom:12px">
+        <label class="row" style="gap:7px;cursor:pointer">
+          <input type="checkbox" id="st-secure" ${smtp.secure !== false ? "checked" : ""} />
+          <span class="small">SSL（465）</span>
+        </label>
+        <label class="row" style="gap:7px;cursor:pointer">
+          <input type="checkbox" id="st-starttls" ${smtp.starttls !== false ? "checked" : ""} />
+          <span class="small">STARTTLS（587）</span>
+        </label>
+        ${smtp.hasPass ? `<label class="row" style="gap:7px;cursor:pointer"><input type="checkbox" id="st-clear-pass" /><span class="small">清除已保存的密码</span></label>` : ""}
+      </div>
+      <div class="grid grid-2">
+        <div class="field"><label>发件人名称</label>
+          <input id="st-from-name" value="${esc(smtp.fromName || "像素松")}" /></div>
+        <div class="field"><label>发件人邮箱</label>
+          <input id="st-from-email" value="${esc(smtp.fromEmail || "")}" placeholder="留空则用账号" /></div>
+      </div>
+      <div class="divider"></div>
+      <div class="row row-wrap" style="gap:10px;align-items:flex-end">
+        <div class="field" style="flex:1;min-width:220px;margin:0">
+          <label>测试发送</label>
+          <input id="st-test-to" placeholder="收件邮箱，例如你自己的工作邮箱" />
+        </div>
+        <button class="btn" id="btn-test-mail" type="button">发送测试邮件</button>
+      </div>
+      <p class="tiny dim" style="margin-top:8px">先保存再测试：测试用的是已保存的配置。</p>
+    </div>
+
+    <div class="card block">
+      <div class="card-head">
+        <h2>人机验证</h2>
+        <span class="card-note">${gt.enabled ? "已开启" : "未开启"}</span>
+      </div>
+      <p class="small muted" style="margin-bottom:16px">
+        接极验行为验证 4.0。未开启时不做人机校验，登录仅靠频率限制兜底。密钥只存服务端，不会下发到浏览器。
+      </p>
+      <label class="row" style="gap:9px;cursor:pointer;margin-bottom:16px">
+        <input type="checkbox" id="gt-enabled" ${gt.enabled ? "checked" : ""} />
+        <span class="small">开启人机验证</span>
+      </label>
+      <div class="grid grid-2">
+        <div class="field"><label>Captcha ID</label>
+          <input id="gt-id" value="${esc(gt.captchaId || "")}" placeholder="从 console.geetest.com 获取" /></div>
+        <div class="field"><label>Captcha Key</label>
+          <input id="gt-key" type="password" placeholder="${gt.hasKey ? "已保存，留空不修改" : "仅服务端使用"}" autocomplete="new-password" />
+          ${secretHint(gt.hasKey, "极验控制台里的 Key，不要泄露")}
+        </div>
+      </div>
+      ${gt.hasKey ? `<label class="row" style="gap:7px;cursor:pointer"><input type="checkbox" id="gt-clear" /><span class="small">清除已保存的 Key</span></label>` : ""}
+    </div>
+
+    <div class="card block">
+      <div class="card-head">
+        <h2>病毒扫描</h2>
+        <span class="card-note">${vt.enabled ? "已开启" : "未开启"}</span>
+      </div>
+      <p class="small muted" style="margin-bottom:16px">
+        按 SHA-256 查询 VirusTotal 已有报告，不上传作品包。未开启时提交页只显示「扫描未启用」，不影响提交。
+      </p>
+      <label class="row" style="gap:9px;cursor:pointer;margin-bottom:16px">
+        <input type="checkbox" id="vt-enabled" ${vt.enabled ? "checked" : ""} />
+        <span class="small">开启病毒扫描</span>
+      </label>
+      <div class="field"><label>VirusTotal API Key</label>
+        <input id="vt-key" type="password" placeholder="${vt.hasKey ? "已保存，留空不修改" : "virustotal.com 免费 key"}" autocomplete="new-password" />
+        ${secretHint(vt.hasKey, "免费版限速 4 次/分钟，服务端已做缓存")}
+      </div>
+      ${vt.hasKey ? `<label class="row" style="gap:7px;cursor:pointer"><input type="checkbox" id="vt-clear" /><span class="small">清除已保存的 Key</span></label>` : ""}
+    </div>
+
+    <div class="row row-wrap" style="gap:10px">
+      <button class="btn btn-primary" id="btn-save-settings">保存设置</button>
+      <span class="tiny dim">保存后立即生效，无需重启容器。</span>
+    </div>`;
+}
+
 /* ------------------------------ 系统 ------------------------------ */
 
 function systemTab(health, profiles) {
@@ -1111,6 +1243,66 @@ function wireAdmin(el, ctx) {
         toast("配置已保存，前台已生效", "ok");
         adminView(el, "#/admin/system");
       } catch (err) { toast(errMsg(err), "err"); busy(e.currentTarget, false); }
+    };
+  }
+
+  const saveSettings = el.querySelector("#btn-save-settings");
+  if (saveSettings) {
+    saveSettings.onclick = async () => {
+      const num = (id, d) => {
+        const v = Number(val(el, id));
+        return Number.isFinite(v) && v > 0 ? v : d;
+      };
+      const patch = {
+        smtp: {
+          enabled: checked(el, "#st-enabled"),
+          host: val(el, "#st-host"),
+          port: num("#st-port", 465),
+          secure: checked(el, "#st-secure"),
+          starttls: checked(el, "#st-starttls"),
+          user: val(el, "#st-user"),
+          fromName: val(el, "#st-from-name"),
+          fromEmail: val(el, "#st-from-email"),
+        },
+        geetest: { enabled: checked(el, "#gt-enabled"), captchaId: val(el, "#gt-id") },
+        virustotal: { enabled: checked(el, "#vt-enabled") },
+      };
+      const pass = val(el, "#st-pass");
+      if (el.querySelector("#st-clear-pass")?.checked) patch.smtp.pass = "__clear__";
+      else if (pass) patch.smtp.pass = pass;
+      const gk = val(el, "#gt-key");
+      if (el.querySelector("#gt-clear")?.checked) patch.geetest.captchaKey = "__clear__";
+      else if (gk) patch.geetest.captchaKey = gk;
+      const vk = val(el, "#vt-key");
+      if (el.querySelector("#vt-clear")?.checked) patch.virustotal.apiKey = "__clear__";
+      else if (vk) patch.virustotal.apiKey = vk;
+
+      busy(saveSettings, true, "保存中…");
+      try {
+        await saveSiteSettings(patch);
+        toast("设置已保存", "ok");
+        adminView(el, "#/admin/settings");
+      } catch (e) {
+        toast(errMsg(e), "err");
+        busy(saveSettings, false);
+      }
+    };
+  }
+
+  const testMailBtn = el.querySelector("#btn-test-mail");
+  if (testMailBtn) {
+    testMailBtn.onclick = async () => {
+      const to = val(el, "#st-test-to");
+      if (!to) return toast("请填写测试收件邮箱", "err");
+      busy(testMailBtn, true, "发送中…");
+      try {
+        await sendTestMail(to);
+        toast("测试邮件已发出，请查收", "ok");
+      } catch (e) {
+        toast(errMsg(e), "err");
+      } finally {
+        busy(testMailBtn, false);
+      }
     };
   }
 

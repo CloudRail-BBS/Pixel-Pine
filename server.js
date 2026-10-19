@@ -42,6 +42,23 @@ const CNKD_PENDING_TTL = 10 * 60 * 1000;
 const CNKD_TICKET_TTL = 5 * 60 * 1000;
 
 const VT_KEY = process.env.VT_API_KEY || "";
+
+/** 本地模式下配置存在库里，云端模式仍读环境变量 */
+function geetestCfg() {
+  if (LOCAL_MODE) {
+    const g = local.getSettings().geetest || {};
+    return { id: g.captchaId || "", key: g.captchaKey || "", enabled: Boolean(g.enabled && g.captchaId && g.captchaKey) };
+  }
+  return { id: GEETEST_ID, key: GEETEST_KEY, enabled: Boolean(GEETEST_ID && GEETEST_KEY) };
+}
+
+function vtCfg() {
+  if (LOCAL_MODE) {
+    const v = local.getSettings().virustotal || {};
+    return { key: v.apiKey || "", enabled: Boolean(v.enabled && v.apiKey) };
+  }
+  return { key: VT_KEY, enabled: Boolean(VT_KEY) };
+}
 const VT_TTL = 30 * 60 * 1000;
 const vtCache = new Map();
 
@@ -98,12 +115,12 @@ function injectBoot(html, req) {
   return html.includes("<!--PS_BOOT-->") ? html.replace("<!--PS_BOOT-->", tag) : html;
 }
 
-async function vtLookup(hash) {
+async function vtLookup(hash, key) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 8000);
   try {
     const resp = await fetch(`https://www.virustotal.com/api/v3/files/${hash}`, {
-      headers: { "x-apikey": VT_KEY },
+      headers: { "x-apikey": key },
       signal: controller.signal,
     });
     if (resp.status === 404) return { status: "notfound" };
@@ -195,7 +212,8 @@ async function validateGeetest(payload) {
   if (!lot_number || !captcha_output || !pass_token || !gen_time) {
     return { ok: false, reason: "missing_fields" };
   }
-  const signToken = hmacSha256(String(lot_number), GEETEST_KEY);
+  const g = geetestCfg();
+  const signToken = hmacSha256(String(lot_number), g.key);
   const form = new URLSearchParams({
     lot_number: String(lot_number),
     captcha_output: String(captcha_output),
@@ -208,7 +226,7 @@ async function validateGeetest(payload) {
   const timer = setTimeout(() => controller.abort(), 5000);
   try {
     const resp = await fetch(
-      `https://gcaptcha4.geetest.com/validate?captcha_id=${encodeURIComponent(GEETEST_ID)}`,
+      `https://gcaptcha4.geetest.com/validate?captcha_id=${encodeURIComponent(g.id)}`,
       {
         method: "POST",
         headers: { "Content-Type": "application/x-www-form-urlencoded" },
@@ -525,17 +543,16 @@ const server = http.createServer({ maxHeaderSize: 64 * 1024 }, async (req, res) 
       version: APP_VERSION,
       uptimeSec: Math.round((Date.now() - STARTED_AT) / 1000),
       node: process.version,
-      geetest: {
-        enabled: Boolean(GEETEST_ID && GEETEST_KEY),
-        hasId: Boolean(GEETEST_ID),
-        hasKey: Boolean(GEETEST_KEY),
-      },
+      geetest: (() => {
+        const g = geetestCfg();
+        return { enabled: g.enabled, hasId: Boolean(g.id), hasKey: Boolean(g.key) };
+      })(),
       cnkd: {
         enabled: Boolean(CNKD_CLIENT_ID),
         mode: CNKD_CLIENT_SECRET ? "confidential" : "public",
       },
       scan: {
-        enabled: Boolean(VT_KEY),
+        enabled: vtCfg().enabled,
       },
       checks: {
         nodeFetch: typeof fetch === "function",
@@ -586,15 +603,23 @@ const server = http.createServer({ maxHeaderSize: 64 * 1024 }, async (req, res) 
   }
 
   if (url.pathname === "/api/geetest/config") {
+    const g = geetestCfg();
+    return sendJson(res, 200, { enabled: g.enabled, captchaId: g.id || null });
+  }
+
+  if (url.pathname === "/api/auth/config") {
+    const smtpOn = LOCAL_MODE && Boolean(local.getSettings().smtp && local.getSettings().smtp.enabled);
+    const g = geetestCfg();
     return sendJson(res, 200, {
-      enabled: Boolean(GEETEST_ID && GEETEST_KEY),
-      captchaId: GEETEST_ID || null,
+      mode: LOCAL_MODE ? "local" : "cloud",
+      otp: LOCAL_MODE ? smtpOn : true,
+      captcha: { enabled: g.enabled, provider: "geetest" },
     });
   }
 
   if (url.pathname === "/api/geetest/validate") {
     if (req.method !== "POST") return sendJson(res, 405, { ok: false, reason: "method_not_allowed" });
-    if (!GEETEST_ID || !GEETEST_KEY) {
+    if (!geetestCfg().enabled) {
       return sendJson(res, 200, { ok: false, reason: "not_configured" });
     }
     let payload;
@@ -608,14 +633,14 @@ const server = http.createServer({ maxHeaderSize: 64 * 1024 }, async (req, res) 
   }
 
   if (url.pathname === "/api/scan") {
-    if (!VT_KEY) return sendJson(res, 200, { ok: true, enabled: false });
+    if (!vtCfg().enabled) return sendJson(res, 200, { ok: true, enabled: false });
     const hash = (url.searchParams.get("hash") || "").toLowerCase();
     if (!/^[a-f0-9]{64}$/.test(hash)) return sendJson(res, 400, { ok: false, reason: "bad_hash" });
     const hit = vtCache.get(hash);
     if (hit && Date.now() - hit.at < VT_TTL) {
       return sendJson(res, 200, { ok: true, enabled: true, cached: true, ...hit.v });
     }
-    const result = await vtLookup(hash);
+    const result = await vtLookup(hash, vtCfg().key);
     vtCache.set(hash, { at: Date.now(), v: result });
     return sendJson(res, 200, { ok: true, enabled: true, ...result });
   }
@@ -749,7 +774,7 @@ if (missingFiles.length) {
 
 server.listen(PORT, HOST, () => {
   console.log(`[pixelsong] v${APP_VERSION} listening on ${HOST}:${PORT}`);
-  console.log(`[pixelsong] geetest ${GEETEST_ID && GEETEST_KEY ? "enabled" : "disabled"}`);
+  console.log(`[pixelsong] geetest ${geetestCfg().enabled ? "enabled" : "disabled"}`);
   console.log(`[pixelsong] cnkd    ${CNKD_CLIENT_ID ? (CNKD_CLIENT_SECRET ? "confidential" : "public") : "disabled"}`);
   console.log(
     LOCAL_MODE

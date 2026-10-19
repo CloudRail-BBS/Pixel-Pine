@@ -146,11 +146,11 @@ export function createLocalCloud(config) {
       async updateUser({ password }) {
         return post("/.cloud/local/auth/me", { password });
       },
-      async sendOtp() {
-        return unavailable("邮箱验证码");
+      async sendOtp({ email }) {
+        return post("/.cloud/local/auth/otp/send", { email });
       },
-      async verifyOtp() {
-        return unavailable("邮箱验证码");
+      async verifyOtp({ email, verificationId, token }) {
+        return post("/.cloud/local/auth/otp/verify", { email, verificationId, code: token });
       },
       async resetPasswordForEmail() {
         return unavailable("邮件重置密码");

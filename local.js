@@ -13,6 +13,7 @@
 const fs = require("fs");
 const path = require("path");
 const crypto = require("crypto");
+const { sendMail } = require("./mailer.js");
 
 const TABLES = [
   "profiles", "users", "sessions", "teams", "team_members", "submissions",
@@ -24,6 +25,15 @@ const PUBLIC_READ = new Set(["activity", "documents", "partners", "announcements
 const ANON_READ = new Set([...PUBLIC_READ, "submissions"]);
 const SESSION_TTL = 30 * 24 * 3600; // 秒
 const MAX_FILE = 200 * 1024 * 1024;
+
+const DEFAULT_SETTINGS = {
+  smtp: {
+    enabled: false, host: "", port: 465, secure: true, starttls: true,
+    user: "", pass: "", fromName: "像素松", fromEmail: "",
+  },
+  geetest: { enabled: false, captchaId: "", captchaKey: "" },
+  virustotal: { enabled: false, apiKey: "" },
+};
 
 let DATA_DIR = "";
 let STORE_FILE = "";
@@ -56,8 +66,10 @@ function init(dataDir, seedFile) {
     db = JSON.parse(fs.readFileSync(STORE_FILE, "utf8"));
     for (const t of TABLES) if (!db.tables[t]) db.tables[t] = [];
     if (!db.seq) db.seq = {};
+    if (!db.otp) db.otp = [];
+    db.settings = mergeSettings(db.settings);
   } else {
-    db = { seq: {}, tables: {} };
+    db = { seq: {}, tables: {}, otp: [], settings: mergeSettings() };
     for (const t of TABLES) db.tables[t] = [];
     seed(seedFile);
     save(true);
@@ -120,6 +132,20 @@ function save(sync) {
       console.error("[local] 写库失败", e.message);
     }
   }, 40);
+}
+
+function mergeSettings(input) {
+  const out = JSON.parse(JSON.stringify(DEFAULT_SETTINGS));
+  for (const key of Object.keys(out)) {
+    if (input && input[key] && typeof input[key] === "object") {
+      Object.assign(out[key], input[key]);
+    }
+  }
+  return out;
+}
+
+function getSettings() {
+  return db.settings || (db.settings = mergeSettings());
 }
 
 function rows(table) {
@@ -554,6 +580,139 @@ async function handleFile(req, res, url, ctx) {
   return sendJson(res, 404, { error: "not_found" });
 }
 
+/* ------------------------------ 邮箱验证码 ------------------------------ */
+
+const otpHits = new Map();
+
+function otpAllowed(key) {
+  const now = Date.now();
+  const rec = otpHits.get(key);
+  if (!rec) {
+    otpHits.set(key, { n: 1, at: now, reset: now + 3600000 });
+    return true;
+  }
+  if (now - rec.at < 60000) return false;
+  if (now > rec.reset) {
+    rec.n = 0;
+    rec.reset = now + 3600000;
+  }
+  if (rec.n >= 5) return false;
+  rec.n += 1;
+  rec.at = now;
+  return true;
+}
+
+function ensureUser(email) {
+  let user = rows("users").find((u) => u.email === email);
+  if (user) {
+    const profile = rows("profiles").find((p) => p.owner_id === user.uid) || {};
+    return { user, profile, created: false, uid: user.uid };
+  }
+  const uid = `u${nextId("users")}`;
+  const salt = crypto.randomBytes(16).toString("hex");
+  user = {
+    id: nextId("users"),
+    uid,
+    email,
+    salt,
+    password_hash: "",
+    created_at: nowIso(),
+  };
+  rows("users").push(user);
+  const isFirst = rows("profiles").length === 0;
+  const profile = {
+    id: nextId("profiles"),
+    owner_id: uid,
+    email,
+    nickname: email.split("@")[0].slice(0, 20),
+    role: isFirst ? "admin" : "participant",
+    looking_for_team: false,
+    created_at: nowIso(),
+  };
+  rows("profiles").push(profile);
+  return { user, profile, created: true, uid };
+}
+
+function otpMailText(code, minutes) {
+  return [
+    "你好，",
+    "",
+    `你正在「像素松」参赛平台登录，验证码：${code}`,
+    `${minutes} 分钟内有效。如果不是你本人操作，请忽略这封邮件。`,
+    "",
+    "—— 像素松",
+  ].join("\n");
+}
+
+async function sendOtp(req, res) {
+  if (!getSettings().smtp.enabled) {
+    return sendJson(res, 400, { error: { message: "管理员尚未开启邮箱验证码登录" } });
+  }
+  const body = await readJson(req);
+  const email = String(body.email || "").trim().toLowerCase();
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    return sendJson(res, 400, { error: { message: "邮箱格式不正确" } });
+  }
+  const ip = (req.headers["x-forwarded-for"] || "").split(",")[0].trim() || req.socket.remoteAddress || "?";
+  if (!otpAllowed(`${ip}:${email}`)) {
+    return sendJson(res, 429, { error: { message: "发送过于频繁，请 1 分钟后再试" } });
+  }
+
+  const code = String(crypto.randomInt(100000, 1000000));
+  const rec = {
+    id: crypto.randomBytes(12).toString("hex"),
+    email,
+    hash: crypto.createHash("sha256").update(`${code}:${email}:${SECRET}`).digest("hex"),
+    exp: new Date(Date.now() + 10 * 60000).toISOString(),
+    tries: 0,
+    used: false,
+    created_at: nowIso(),
+  };
+  db.otp = (db.otp || []).filter((o) => new Date(o.exp).getTime() > Date.now()).slice(-200);
+  db.otp.push(rec);
+  save(true);
+
+  const s = getSettings().smtp;
+  try {
+    await sendMail(s, {
+      to: email,
+      subject: "像素松 · 登录验证码",
+      text: otpMailText(code, 10),
+    });
+  } catch (e) {
+    db.otp = db.otp.filter((o) => o.id !== rec.id);
+    save(true);
+    return sendJson(res, 502, { error: { message: `邮件发送失败：${e.message}` } });
+  }
+
+  const exists = rows("users").some((u) => u.email === email);
+  return sendJson(res, 200, { data: { verificationId: rec.id, isExistingUser: exists } });
+}
+
+async function verifyOtp(req, res) {
+  const body = await readJson(req);
+  const email = String(body.email || "").trim().toLowerCase();
+  const id = String(body.verificationId || "");
+  const code = String(body.code || "").trim();
+  const rec = (db.otp || []).find((o) => o.id === id && o.email === email);
+  if (!rec || rec.used) return sendJson(res, 400, { error: { message: "验证码已失效，请重新获取" } });
+  if (new Date(rec.exp).getTime() < Date.now()) {
+    return sendJson(res, 400, { error: { message: "验证码已过期，请重新获取" } });
+  }
+  if (rec.tries >= 5) return sendJson(res, 429, { error: { message: "尝试次数过多，请重新获取" } });
+  rec.tries += 1;
+  const expect = crypto.createHash("sha256").update(`${code}:${email}:${SECRET}`).digest("hex");
+  if (!safeEqual(expect, rec.hash)) {
+    save(true);
+    return sendJson(res, 400, { error: { message: "验证码错误" } });
+  }
+  rec.used = true;
+  const { uid, profile } = ensureUser(email);
+  createSession(res, uid, req);
+  save(true);
+  return sendJson(res, 200, { data: { user: { id: uid, email }, role: profile.role || "participant" } });
+}
+
 /* ------------------------------ 认证 ------------------------------ */
 
 const loginHits = new Map();
@@ -572,6 +731,9 @@ function tooMany(ip) {
 async function handleAuth(req, res, url) {
   const ip = (req.headers["x-forwarded-for"] || "").split(",")[0].trim() || req.socket.remoteAddress || "?";
 
+  if (url.pathname.endsWith("/auth/otp/send") && req.method === "POST") return sendOtp(req, res);
+  if (url.pathname.endsWith("/auth/otp/verify") && req.method === "POST") return verifyOtp(req, res);
+
   if (url.pathname.endsWith("/auth/session") && req.method === "GET") {
     const u = currentUser(req);
     return sendJson(res, 200, { data: u ? { user: { id: u.uid, email: u.profile.email } } : null });
@@ -588,30 +750,16 @@ async function handleAuth(req, res, url) {
     if (password.length < 6) return sendJson(res, 400, { error: { message: "密码至少 6 位" } });
 
     let user = rows("users").find((u) => u.email === email);
-    if (!user) {
-      // 首次使用即注册：本地模式没有邮件服务，不做邮箱验证
-      const uid = `u${nextId("users")}`;
-      const salt = crypto.randomBytes(16).toString("hex");
-      user = {
-        id: nextId("users"),
-        uid,
-        email,
-        salt,
-        password_hash: scrypt(password, salt),
-        created_at: nowIso(),
-      };
-      rows("users").push(user);
-
-      const isFirst = rows("profiles").length === 0;
-      rows("profiles").push({
-        id: nextId("profiles"),
-        owner_id: uid,
-        email,
-        nickname: email.split("@")[0].slice(0, 20),
-        role: isFirst ? "admin" : "participant",
-        looking_for_team: false,
-        created_at: nowIso(),
-      });
+    if (user && !user.password_hash) {
+      // 先用验证码注册、尚未设密码：首次用密码登录即设置密码
+      user.salt = crypto.randomBytes(16).toString("hex");
+      user.password_hash = scrypt(password, user.salt);
+      save();
+    } else if (!user) {
+      const created = ensureUser(email);
+      user = created.user;
+      user.salt = crypto.randomBytes(16).toString("hex");
+      user.password_hash = scrypt(password, user.salt);
     } else if (!safeEqual(scrypt(password, user.salt), user.password_hash)) {
       return sendJson(res, 401, { error: { message: "邮箱或密码错误" } });
     }
@@ -686,6 +834,65 @@ async function handleRpc(req, res, ctx) {
   return sendJson(res, 200, { data: true });
 }
 
+/* ------------------------------ 站点设置 ------------------------------ */
+
+function maskSettings() {
+  const s = getSettings();
+  return {
+    smtp: { ...s.smtp, pass: "", hasPass: Boolean(s.smtp.pass) },
+    geetest: { ...s.geetest, captchaKey: "", hasKey: Boolean(s.geetest.captchaKey) },
+    virustotal: { ...s.virustotal, apiKey: "", hasKey: Boolean(s.virustotal.apiKey) },
+  };
+}
+
+async function handleSettings(req, res, url, ctx) {
+  if (!ctx || !isAdmin(ctx)) return sendJson(res, 403, { error: { message: "只有主办方可以修改设置" } });
+
+  if (req.method === "GET") return sendJson(res, 200, { data: maskSettings() });
+
+  if (req.method === "POST" && url.pathname.endsWith("/test-mail")) {
+    const body = await readJson(req);
+    const to = String(body.to || "").trim();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(to)) {
+      return sendJson(res, 400, { error: { message: "请填写正确的测试收件邮箱" } });
+    }
+    try {
+      await sendMail(getSettings().smtp, {
+        to,
+        subject: "像素松 · 邮件配置测试",
+        text: "如果你收到这封邮件，说明 SMTP 配置可用。\n\n—— 像素松",
+      });
+      return sendJson(res, 200, { data: { ok: true } });
+    } catch (e) {
+      return sendJson(res, 502, { error: { message: e.message } });
+    }
+  }
+
+  if (req.method === "POST") {
+    const body = await readJson(req);
+    const s = getSettings();
+    const patch = body || {};
+    for (const key of ["smtp", "geetest", "virustotal"]) {
+      if (!patch[key] || typeof patch[key] !== "object") continue;
+      const next = { ...s[key] };
+      for (const [k, v] of Object.entries(patch[key])) {
+        if (k === "pass" || k === "captchaKey" || k === "apiKey") {
+          if (v === "__clear__") next[k] = "";
+          else if (typeof v === "string" && v.trim()) next[k] = v.trim();
+          continue;
+        }
+        next[k] = v;
+      }
+      s[key] = next;
+    }
+    db.settings = mergeSettings(s);
+    save(true);
+    return sendJson(res, 200, { data: maskSettings() });
+  }
+
+  return sendJson(res, 405, { error: { message: "method_not_allowed" } });
+}
+
 /* ------------------------------ 入口 ------------------------------ */
 
 async function handle(req, res, url) {
@@ -705,6 +912,10 @@ async function handle(req, res, url) {
       await handleRpc(req, res, ctx);
       return true;
     }
+    if (url.pathname.startsWith("/.cloud/local/settings")) {
+      await handleSettings(req, res, url, ctx);
+      return true;
+    }
     if (url.pathname.startsWith("/.cloud/local/file")) {
       await handleFile(req, res, url, ctx);
       return true;
@@ -718,4 +929,4 @@ async function handle(req, res, url) {
   }
 }
 
-module.exports = { init, handle, rows };
+module.exports = { init, handle, rows, getSettings };
