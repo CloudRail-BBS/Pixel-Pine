@@ -31,10 +31,12 @@
 
 ## 技术结构
 
-无构建步骤，原生 ES Modules + 一个零依赖 Node 服务。
+无构建步骤，原生 ES Modules + 一个零依赖 Node 服务。云 SDK 已本地化（v0.1.4-dev，MIT），不依赖 CDN：浏览器的跟踪防护会阻止第三方脚本访问 localStorage，导致登录态无法保存。
 
 ```
 index.html            入口（哈希路由）
+assets/logo.svg       站点标识
+assets/vendor/        云 SDK（MIT，本地化，避免 CDN 被跟踪防护拦 storage）
 css/app.css           全部样式
 js/config.js          公开配置、赛道、评分维度、公约文本
 js/core.js            云客户端、会话、路由、Markdown 渲染

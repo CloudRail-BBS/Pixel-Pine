@@ -308,6 +308,21 @@ function proxyCloud(req, res, upstream) {
   for (const k of ["host", "origin", "referer", "accept-encoding", "connection", "keep-alive", "proxy-connection", "transfer-encoding", "te", "trailer", "upgrade"]) {
     delete headers[k];
   }
+
+  // 云会话存在 localStorage，不依赖 cookie。浏览器会把同一主机（不分端口）
+  // 的所有 cookie 都带上来，面板机上很容易累积到十几 KB，上游直接回 431。
+  const cookieBytes = String(req.headers.cookie || "").length;
+  delete headers.cookie;
+
+  let fwdBytes = 0;
+  for (const [k, v] of Object.entries(headers)) fwdBytes += k.length + String(v).length + 4;
+  if (cookieBytes > 2048 || fwdBytes > 8192) {
+    console.warn(
+      `[proxy] 请求头偏大：转发 ${fwdBytes}B` +
+        (cookieBytes ? `，已丢弃 cookie ${cookieBytes}B` : "") +
+        ` · ${req.method} ${req.url}`
+    );
+  }
   headers["x-forwarded-host"] = req.headers.host || "";
   headers["x-forwarded-proto"] =
     (req.headers["x-forwarded-proto"] || "").split(",")[0].trim() ||
@@ -414,7 +429,7 @@ function serveStatic(req, res) {
   });
 }
 
-const server = http.createServer(async (req, res) => {
+const server = http.createServer({ maxHeaderSize: 64 * 1024 }, async (req, res) => {
   const url = new URL(req.url, "http://localhost");
 
   if (url.pathname === "/api/health") {

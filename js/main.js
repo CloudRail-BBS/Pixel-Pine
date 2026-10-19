@@ -1,4 +1,4 @@
-import { cloud, state, loadSession, loadMe, loadActivity, route, render, navigate } from "./core.js";
+import { cloud, state, loadSession, loadMe, loadActivity, route, render, navigate, esc } from "./core.js";
 import {
   homeView, rulesView, loginView, resultsView, noticesView, cnkdView, worksView, workDetailView,
   judgesView,
@@ -72,13 +72,25 @@ function registerRoutes() {
   route("*", homeView);
 }
 
+function bootErrorText(e) {
+  if (typeof e === "string") return e;
+  if (e && typeof e.message === "string" && e.message.trim()) return e.message;
+  if (e && e.error && typeof e.error.description === "string") return e.error.description;
+  try {
+    const s = JSON.stringify(e);
+    if (s && s !== "{}") return s;
+  } catch (_) {}
+  return "数据服务没有响应，请刷新重试；若持续出现，检查服务器能否访问数据面。";
+}
+
 async function boot() {
   const app = document.getElementById("app");
   try {
-    if (!window.WorkBuddyCloud) throw new Error("SDK 未加载，请检查网络后刷新");
-    await restoreAuth();
-    await loadActivity();
-    if (state.session) await loadMe(true);
+    if (!window.WorkBuddyCloud) throw new Error("SDK 未加载，请刷新页面或检查静态资源是否完整");
+    // 会话、活动配置失败不应该把整站打成白屏，降级继续渲染
+    await restoreAuth().catch((e) => console.warn("[boot] session", e));
+    await loadActivity().catch((e) => console.warn("[boot] activity", e));
+    if (state.session) await loadMe(true).catch((e) => console.warn("[boot] me", e));
     registerRoutes();
     if (!location.hash) location.replace("#/home");
     window.addEventListener("hashchange", render);
@@ -86,9 +98,9 @@ async function boot() {
     await render();
   } catch (e) {
     console.error(e);
-    app.innerHTML = `<div style="max-width:520px;margin:16vh auto;padding:24px;text-align:center">
+    app.innerHTML = `<div style="max-width:560px;margin:16vh auto;padding:24px;text-align:center">
       <h2 style="margin-bottom:10px">无法载入</h2>
-      <p class="muted small">${e?.message || "未知错误"}</p>
+      <p class="muted small" style="word-break:break-word">${esc(bootErrorText(e))}</p>
       <button class="btn" onclick="location.reload()" style="margin-top:14px">重新加载</button>
     </div>`;
   }

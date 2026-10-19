@@ -34,6 +34,27 @@ const get = (p) => fetch(BASE + p, { redirect: "manual" });
     return { ok, detail: `${r.status}${ok ? "" : " 内容异常"}` };
   });
 
+  await probe("站点图标可加载", async () => {
+    const r = await get("/assets/logo.svg");
+    const ct = r.headers.get("content-type") || "";
+    return { ok: r.status === 200 && ct.includes("svg"), detail: `${r.status} ${ct.split(";")[0]}` };
+  });
+
+  await probe("SDK 走本地资源", async () => {
+    const r = await get("/assets/vendor/workbuddy-cloud-sdk.js");
+    const text = r.status === 200 ? await r.text() : "";
+    const ok = r.status === 200 && text.includes("WorkBuddyCloud");
+    return { ok, detail: ok ? `${Math.round(text.length / 1024)} KB` : `${r.status} 资源缺失` };
+  });
+
+  await probe("首页不再引 CDN", async () => {
+    const r = await get("/");
+    const text = r.status === 200 ? await r.text() : "";
+    const local = text.includes("assets/vendor/workbuddy-cloud-sdk.js");
+    const cdn = text.includes("cdn.jsdelivr.net");
+    return { ok: local && !cdn, detail: local ? (cdn ? "仍引用 CDN" : "仅本地资源") : "未引用本地 SDK" };
+  });
+
   await probe("健康检查", async () => {
     const r = await get("/api/health");
     const j = await r.json();
