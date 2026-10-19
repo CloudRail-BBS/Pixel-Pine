@@ -10,6 +10,7 @@ COPY server.js ./
 COPY local.js ./
 COPY mailer.js ./
 COPY index.html ./
+COPY favicon.ico ./
 COPY css ./css
 COPY js ./js
 COPY assets ./assets

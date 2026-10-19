@@ -272,16 +272,24 @@ export async function rulesView(el) {
 const LOCAL_MODE = Boolean(
   typeof window !== "undefined" && window.__PS_CONFIG__ && window.__PS_CONFIG__.local
 );
+// 后台未维护「登录页说明」时的兜底文案
+const DEFAULT_LOGIN_NOTE = LOCAL_MODE
+  ? "本实例为独立部署：账号、数据与文件都保存在这台服务器上。首次使用邮箱登录会自动创建账号，首个账号成为主办方。"
+  : "CNKD 一证通行用于核验你在 CNKD 生态的身份并绑定到本站账号；本站作品与报名数据仍由站内账号承载。";
 let loginMode = "otp";
 let AUTH_CFG = null;
 
+// 每次进登录页都重新拉取：后台开关（验证码 / 人机验证 / CNKD）改完要立即生效
 async function loadAuthCfg() {
-  if (AUTH_CFG) return AUTH_CFG;
   try {
-    const r = await fetch("/api/auth/config", { headers: { accept: "application/json" } });
+    const r = await fetch("/api/auth/config", {
+      headers: { accept: "application/json" },
+      cache: "no-store",
+    });
+    if (!r.ok) throw new Error(String(r.status));
     AUTH_CFG = await r.json();
   } catch (_) {
-    AUTH_CFG = { otp: true, captcha: { enabled: false } };
+    AUTH_CFG = AUTH_CFG || { otp: true, captcha: { enabled: false } };
   }
   return AUTH_CFG;
 }
@@ -365,6 +373,18 @@ export async function loginView(el) {
   const cfg = await loadAuthCfg();
   const allowOtp = !LOCAL_MODE || Boolean(cfg.otp);
   if (!allowOtp) loginMode = "pwd";
+
+  // 登录页说明由后台「内容 → 登录页说明」维护；读不到时用内置兜底
+  let noteHtml = "";
+  try {
+    const doc = await getDocument("login");
+    if (doc && doc.body && doc.body.trim()) noteHtml = renderDoc(doc.body).html;
+  } catch (_) {}
+  if (!noteHtml) noteHtml = `<p>${esc(DEFAULT_LOGIN_NOTE)}</p>`;
+
+  const cnkdOn = !LOCAL_MODE || Boolean(cfg.cnkd && cfg.cnkd.enabled);
+  const showThirdParty = cnkdOn || !LOCAL_MODE;
+
   el.innerHTML = shell(`
     <div class="auth-wrap">
       <div class="card">
@@ -375,34 +395,29 @@ export async function loginView(el) {
           ${
             LOCAL_MODE && !allowOtp
               ? `<div class="auth-tabs"><button class="on" type="button">邮箱密码登录</button></div>
-                 ${pwdPane()}
-                 <p class="tiny dim" style="margin-top:14px">本实例为独立部署；管理员开启邮件服务后，可在此使用邮箱验证码登录。</p>`
+                 ${pwdPane()}`
               : `<div class="auth-tabs">
                    <button class="${loginMode === "otp" ? "on" : ""}" data-mode="otp" type="button">验证码登录</button>
                    <button class="${loginMode === "pwd" ? "on" : ""}" data-mode="pwd" type="button">密码登录</button>
                  </div>
-                 ${loginMode === "otp" ? otpPane() : pwdPane()}
-                 ${
-                   LOCAL_MODE
-                     ? ""
-                     : `<div class="row" style="margin:20px 0 16px;gap:12px">
-                          <span style="flex:1;height:1px;background:var(--line)"></span>
-                          <span class="tiny dim">或</span>
-                          <span style="flex:1;height:1px;background:var(--line)"></span>
-                        </div>`
-                 }
-                 ${
-                   LOCAL_MODE
-                     ? `<p class="tiny dim" style="margin-top:14px">本实例为独立部署：账号、数据与文件都保存在这台服务器上。首次用邮箱登录会自动创建账号，首个账号成为主办方。</p>`
-                     : `<button class="btn btn-block" id="btn-cnkd" type="button">CNKD 一证通行</button>
-                        <button class="btn btn-block" id="btn-wechat" type="button" style="margin-top:9px">微信扫码登录</button>
-                        <p class="tiny dim" style="margin-top:14px">CNKD 一证通行用于核验你在 CNKD 生态的身份并绑定到本站账号；本站作品与报名数据仍由站内账号承载。微信登录需在已发布域名下使用。</p>`
-                 }
-                 `}
-          `
+                 ${loginMode === "otp" ? otpPane() : pwdPane()}`
+          }
+          ${
+            showThirdParty
+              ? `<div class="row" style="margin:20px 0 16px;gap:12px">
+                   <span style="flex:1;height:1px;background:var(--line)"></span>
+                   <span class="tiny dim">或</span>
+                   <span style="flex:1;height:1px;background:var(--line)"></span>
+                 </div>
+                 ${cnkdOn ? `<button class="btn btn-block" id="btn-cnkd" type="button">CNKD 一证通行</button>` : ""}
+                 ${LOCAL_MODE ? "" : `<button class="btn btn-block" id="btn-wechat" type="button" style="margin-top:9px">微信扫码登录</button>`}`
+              : ""
+          }
+        `
         }
       </div>
-      <p class="tiny dim center" style="margin-top:16px">登录即表示同意活动规则与隐私说明</p>
+      <div class="auth-note">${noteHtml}</div>
+      <p class="tiny dim center" style="margin-top:14px">登录即表示同意活动规则与隐私说明</p>
     </div>
   `);
   bindShell();

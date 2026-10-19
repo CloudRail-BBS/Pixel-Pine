@@ -40,6 +40,19 @@ const get = (p) => fetch(BASE + p, { redirect: "manual" });
     return { ok: r.status === 200 && ct.includes("svg"), detail: `${r.status} ${ct.split(";")[0]}` };
   });
 
+  // 标签页图标：ICO 兜底 + PNG + SVG 三重声明，缺任何一个都可能退回默认地球图标
+  await probe("页签图标（favicon）", async () => {
+    const checks = [];
+    for (const p of ["/favicon.ico", "/assets/favicon-32.png"]) {
+      const r = await get(p);
+      checks.push({ p, status: r.status, type: (r.headers.get("content-type") || "").split(";")[0] });
+    }
+    const html = await (await get("/")).text();
+    const declared = html.includes('rel="icon"') && html.includes("favicon.ico");
+    const ok = checks.every((c) => c.status === 200) && declared;
+    return { ok, detail: ok ? "ICO + PNG + SVG 均已声明" : `资源 ${JSON.stringify(checks)} 声明=${declared}` };
+  });
+
   await probe("SDK 走本地资源", async () => {
     const r = await get("/assets/vendor/workbuddy-cloud-sdk.js");
     const text = r.status === 200 ? await r.text() : "";
@@ -66,7 +79,7 @@ const get = (p) => fetch(BASE + p, { redirect: "manual" });
   await probe("登录方式配置", async () => {
     const r = await get("/api/auth/config");
     const j = await r.json();
-    return { ok: typeof j.otp === "boolean", detail: `otp=${j.otp} captcha=${j.captcha && j.captcha.enabled}` };
+    return { ok: typeof j.otp === "boolean", detail: `otp=${j.otp} captcha=${j.captcha && j.captcha.enabled} cnkd=${j.cnkd && j.cnkd.enabled}` };
   });
 
   await probe("健康检查", async () => {

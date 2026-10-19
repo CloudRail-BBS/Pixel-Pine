@@ -415,16 +415,21 @@ export async function listDocuments() {
 }
 
 export async function saveDocument(key, { title, body }) {
-  const rows = unwrap(
-    await db.from("documents").update({
-      title,
-      body,
-      updated_at: new Date().toISOString(),
-      owner_id: sessionUid(),
-    }).eq("doc_key", key).select()
+  const patch = {
+    title,
+    body,
+    updated_at: new Date().toISOString(),
+    owner_id: sessionUid(),
+  };
+  const rows = unwrap(await db.from("documents").update(patch).eq("doc_key", key).select());
+  if (rows && rows.length) return rows[0];
+
+  // 该文档还没建过（例如老部署升级后新增的「登录页说明」）→ 首次保存时补建
+  const created = unwrap(
+    await db.from("documents").insert({ doc_key: key, version: 1, ...patch }).select()
   );
-  if (!rows || !rows.length) throw new Error("保存失败：没有权限修改该文档");
-  return rows[0];
+  if (!created || !created.length) throw new Error("保存失败：没有权限修改该文档");
+  return created[0];
 }
 
 /* ---------------- 证书 ---------------- */

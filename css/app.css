@@ -459,6 +459,13 @@ input[type="checkbox"] { accent-color: var(--accent-dim); }
 
 .auth-wrap { max-width: 430px; margin: 46px auto; }
 
+/* 登录页说明（后台「内容 → 登录页说明」维护） */
+.auth-note { margin-top: 16px; color: var(--dim); font-size: 11.5px; line-height: 1.7; }
+.auth-note p { margin: 0 0 6px; }
+.auth-note p:last-child { margin-bottom: 0; }
+.auth-note strong { color: var(--muted); font-weight: 600; }
+.auth-note code { font-family: var(--mono); font-size: 11px; }
+
 .gt-slot { margin: 4px 0 16px; }
 
 .mobile-nav { display: none; }

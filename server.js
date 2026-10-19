@@ -34,9 +34,12 @@ const GEETEST_KEY = process.env.GEETEST_CAPTCHA_KEY || "";
 
 const CNKD_BASE = "https://cloud.cnkd.fun";
 const CNKD_API = CNKD_BASE + "/api-control";
-const CNKD_CLIENT_ID = process.env.CNKD_CLIENT_ID || "";
-const CNKD_CLIENT_SECRET = process.env.CNKD_CLIENT_SECRET || "";
-const CNKD_REDIRECT_URI = process.env.CNKD_REDIRECT_URI || "";
+// 云模式从环境变量读；本地模式改由后台「设置 → CNKD 一证通行」维护
+const CNKD_ENV = {
+  clientId: process.env.CNKD_CLIENT_ID || "",
+  clientSecret: process.env.CNKD_CLIENT_SECRET || "",
+  redirectUri: process.env.CNKD_REDIRECT_URI || "",
+};
 const CNKD_SCOPE = "profile.basic profile.status";
 const CNKD_PENDING_TTL = 10 * 60 * 1000;
 const CNKD_TICKET_TTL = 5 * 60 * 1000;
@@ -58,6 +61,26 @@ function vtCfg() {
     return { key: v.apiKey || "", enabled: Boolean(v.enabled && v.apiKey) };
   }
   return { key: VT_KEY, enabled: Boolean(VT_KEY) };
+}
+
+/** CNKD 一证通行：本地模式读库内设置，云端模式读环境变量 */
+function cnkdCfg() {
+  if (LOCAL_MODE) {
+    const c = local.getSettings().cnkd || {};
+    const clientId = String(c.clientId || "").trim();
+    return {
+      clientId,
+      clientSecret: String(c.clientSecret || "").trim(),
+      redirectUri: String(c.redirectUri || "").trim(),
+      enabled: Boolean(c.enabled && clientId),
+    };
+  }
+  return {
+    clientId: CNKD_ENV.clientId,
+    clientSecret: CNKD_ENV.clientSecret,
+    redirectUri: CNKD_ENV.redirectUri,
+    enabled: Boolean(CNKD_ENV.clientId),
+  };
 }
 const VT_TTL = 30 * 60 * 1000;
 const vtCache = new Map();
@@ -274,7 +297,7 @@ function originOf(req) {
 }
 
 function redirectUriOf(req) {
-  return CNKD_REDIRECT_URI || `${originOf(req)}/api/cnkd/callback`;
+  return cnkdCfg().redirectUri || `${originOf(req)}/api/cnkd/callback`;
 }
 
 async function cnkdPost(path, body, headers) {
@@ -547,10 +570,10 @@ const server = http.createServer({ maxHeaderSize: 64 * 1024 }, async (req, res) 
         const g = geetestCfg();
         return { enabled: g.enabled, hasId: Boolean(g.id), hasKey: Boolean(g.key) };
       })(),
-      cnkd: {
-        enabled: Boolean(CNKD_CLIENT_ID),
-        mode: CNKD_CLIENT_SECRET ? "confidential" : "public",
-      },
+      cnkd: (() => {
+        const c = cnkdCfg();
+        return { enabled: c.enabled, mode: c.clientSecret ? "confidential" : "public" };
+      })(),
       scan: {
         enabled: vtCfg().enabled,
       },
@@ -610,10 +633,12 @@ const server = http.createServer({ maxHeaderSize: 64 * 1024 }, async (req, res) 
   if (url.pathname === "/api/auth/config") {
     const smtpOn = LOCAL_MODE && Boolean(local.getSettings().smtp && local.getSettings().smtp.enabled);
     const g = geetestCfg();
+    const c = cnkdCfg();
     return sendJson(res, 200, {
       mode: LOCAL_MODE ? "local" : "cloud",
       otp: LOCAL_MODE ? smtpOn : true,
       captcha: { enabled: g.enabled, provider: "geetest" },
+      cnkd: { enabled: c.enabled },
     });
   }
 
@@ -646,16 +671,18 @@ const server = http.createServer({ maxHeaderSize: 64 * 1024 }, async (req, res) 
   }
 
   if (url.pathname === "/api/cnkd/config") {
+    const c = cnkdCfg();
     return sendJson(res, 200, {
-      enabled: Boolean(CNKD_CLIENT_ID),
-      mode: CNKD_CLIENT_SECRET ? "confidential" : "public",
+      enabled: c.enabled,
+      mode: c.clientSecret ? "confidential" : "public",
       scope: CNKD_SCOPE,
       site: CNKD_BASE,
     });
   }
 
   if (url.pathname === "/api/cnkd/start") {
-    if (!CNKD_CLIENT_ID) {
+    const c = cnkdCfg();
+    if (!c.enabled) {
       return sendRedirect(res, "/#/cnkd?error=" + encodeURIComponent("CNKD 登录尚未配置客户端 ID"));
     }
     pruneCnkd();
@@ -665,7 +692,7 @@ const server = http.createServer({ maxHeaderSize: 64 * 1024 }, async (req, res) 
     cnkdPending.set(state, { verifier, at: Date.now() });
     const target = new URL(CNKD_BASE + "/account/oauth/authorize");
     target.searchParams.set("response_type", "code");
-    target.searchParams.set("client_id", CNKD_CLIENT_ID);
+    target.searchParams.set("client_id", c.clientId);
     target.searchParams.set("redirect_uri", redirectUriOf(req));
     target.searchParams.set("scope", CNKD_SCOPE);
     target.searchParams.set("state", state);
@@ -676,6 +703,8 @@ const server = http.createServer({ maxHeaderSize: 64 * 1024 }, async (req, res) 
 
   if (url.pathname === "/api/cnkd/callback") {
     const fail = (msg) => sendRedirect(res, "/#/cnkd?error=" + encodeURIComponent(msg));
+    const c = cnkdCfg();
+    if (!c.enabled) return fail("CNKD 登录尚未配置");
     if (url.searchParams.get("error")) {
       return fail(url.searchParams.get("error_description") || "CNKD 授权未完成");
     }
@@ -689,12 +718,12 @@ const server = http.createServer({ maxHeaderSize: 64 * 1024 }, async (req, res) 
 
     const body = {
       grant_type: "authorization_code",
-      client_id: CNKD_CLIENT_ID,
+      client_id: c.clientId,
       code,
       redirect_uri: redirectUriOf(req),
       code_verifier: rec.verifier,
     };
-    if (CNKD_CLIENT_SECRET) body.client_secret = CNKD_CLIENT_SECRET;
+    if (c.clientSecret) body.client_secret = c.clientSecret;
 
     let token;
     try {
@@ -775,7 +804,10 @@ if (missingFiles.length) {
 server.listen(PORT, HOST, () => {
   console.log(`[pixelsong] v${APP_VERSION} listening on ${HOST}:${PORT}`);
   console.log(`[pixelsong] geetest ${geetestCfg().enabled ? "enabled" : "disabled"}`);
-  console.log(`[pixelsong] cnkd    ${CNKD_CLIENT_ID ? (CNKD_CLIENT_SECRET ? "confidential" : "public") : "disabled"}`);
+  console.log(`[pixelsong] cnkd    ${(() => {
+    const c = cnkdCfg();
+    return c.enabled ? (c.clientSecret ? "confidential" : "public") : "disabled";
+  })()}`);
   console.log(
     LOCAL_MODE
       ? `[pixelsong] data    local → ${DATA_DIR}`

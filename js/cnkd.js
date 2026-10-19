@@ -1,9 +1,12 @@
 let cfg = null;
 
+// 不缓存：后台改完 CNKD 配置后，进登录页应立刻反映最新的启用状态
 export async function cnkdConfig() {
-  if (cfg) return cfg;
   try {
-    const r = await fetch("/api/cnkd/config", { headers: { accept: "application/json" } });
+    const r = await fetch("/api/cnkd/config", {
+      headers: { accept: "application/json" },
+      cache: "no-store",
+    });
     if (!r.ok) throw new Error("bad status");
     cfg = await r.json();
   } catch (_) {

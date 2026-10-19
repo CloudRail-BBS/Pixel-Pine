@@ -431,6 +431,7 @@ function appealsTab(appeals) {
 function contentTab(docs) {
   const rules = (docs || []).find((d) => d.doc_key === "rules");
   const intro = (docs || []).find((d) => d.doc_key === "intro");
+  const login = (docs || []).find((d) => d.doc_key === "login");
   return `
     <div class="card block">
       <div class="card-head"><h2>活动介绍</h2>
@@ -452,6 +453,24 @@ function contentTab(docs) {
       <div class="row row-wrap" style="gap:10px">
         <button class="btn btn-primary" id="btn-save-intro">保存并立即生效</button>
         <a class="btn btn-ghost" href="#/home" target="_blank" rel="noopener">预览首页</a>
+      </div>
+    </div>
+
+    <div class="card block">
+      <div class="card-head"><h2>登录页说明</h2>
+        <span class="card-note">${login ? "更新于 " + esc(fmtFull(login.updated_at)) : "使用默认文案"}</span>
+      </div>
+      <p class="small muted" style="margin-bottom:16px">
+        显示在登录卡片下方，用于说明本站的账号规则、登录方式或注意事项。支持简单的 Markdown：<span class="mono tiny">**加粗**</span>、<span class="mono tiny">- 列表</span>、<span class="mono tiny">换行即分段</span>。留空则回退到内置文案。
+      </p>
+      <div class="field">
+        <label>正文</label>
+        <textarea id="login-body" style="min-height:130px">${esc(login?.body || "")}</textarea>
+        <div class="hint">赛前写给参赛者看的短说明即可，建议 40–120 字。</div>
+      </div>
+      <div class="row row-wrap" style="gap:10px">
+        <button class="btn btn-primary" id="btn-save-login">保存并立即生效</button>
+        <a class="btn btn-ghost" href="#/login" target="_blank" rel="noopener">预览登录页</a>
       </div>
     </div>
 
@@ -834,6 +853,7 @@ function settingsTab(cfg, auth) {
   const smtp = cfg.smtp || {};
   const gt = cfg.geetest || {};
   const vt = cfg.virustotal || {};
+  const ck = cfg.cnkd || {};
 
   return `
     <div class="card block">
@@ -913,6 +933,33 @@ function settingsTab(cfg, auth) {
         </div>
       </div>
       ${gt.hasKey ? `<label class="row" style="gap:7px;cursor:pointer"><input type="checkbox" id="gt-clear" /><span class="small">清除已保存的 Key</span></label>` : ""}
+    </div>
+
+    <div class="card block">
+      <div class="card-head">
+        <h2>CNKD 一证通行</h2>
+        <span class="card-note">${ck.enabled ? "已开启" : "未开启"}</span>
+      </div>
+      <p class="small muted" style="margin-bottom:16px">
+        开启并填好客户端 ID 后，登录页会出现「CNKD 一证通行」按钮。授权地址由服务端发起，Secret 只存服务端、不会下发到浏览器。
+      </p>
+      <label class="row" style="gap:9px;cursor:pointer;margin-bottom:16px">
+        <input type="checkbox" id="ck-enabled" ${ck.enabled ? "checked" : ""} />
+        <span class="small">开启 CNKD 登录</span>
+      </label>
+      <div class="grid grid-2">
+        <div class="field"><label>Client ID</label>
+          <input id="ck-id" value="${esc(ck.clientId || "")}" placeholder="CNKD 平台分配的应用 ID" /></div>
+        <div class="field"><label>Client Secret</label>
+          <input id="ck-secret" type="password" placeholder="${ck.hasSecret ? "已保存，留空不修改" : "公开应用可留空"}" autocomplete="new-password" />
+          ${secretHint(ck.hasSecret, "保密应用才需要；公开应用走 PKCE，留空即可")}
+        </div>
+      </div>
+      <div class="field"><label>回调地址</label>
+        <input id="ck-redirect" value="${esc(ck.redirectUri || "")}" placeholder="留空则自动使用 当前域名/api/cnkd/callback" />
+        <div class="hint">需与 CNKD 平台登记值逐字一致。留空时按当前访问域名自动生成，换域名不必改配置。</div>
+      </div>
+      ${ck.hasSecret ? `<label class="row" style="gap:7px;cursor:pointer"><input type="checkbox" id="ck-clear" /><span class="small">清除已保存的 Secret</span></label>` : ""}
     </div>
 
     <div class="card block">
@@ -1224,6 +1271,23 @@ function wireAdmin(el, ctx) {
     };
   }
 
+  const saveLogin = el.querySelector("#btn-save-login");
+  if (saveLogin) {
+    saveLogin.onclick = async (e) => {
+      const body = el.querySelector("#login-body").value;
+      busy(e.currentTarget, true, "保存中…");
+      try {
+        const { saveDocument } = await import("./api.js");
+        await saveDocument("login", { title: "登录页说明", body });
+        toast("已保存，登录页已更新", "ok");
+        adminView(el, "#/admin/content");
+      } catch (err) {
+        toast(errMsg(err), "err");
+        busy(e.currentTarget, false);
+      }
+    };
+  }
+
   const saveAct = el.querySelector("#btn-save-act");
   if (saveAct) {
     saveAct.onclick = async (e) => {
@@ -1266,6 +1330,11 @@ function wireAdmin(el, ctx) {
         },
         geetest: { enabled: checked(el, "#gt-enabled"), captchaId: val(el, "#gt-id") },
         virustotal: { enabled: checked(el, "#vt-enabled") },
+        cnkd: {
+          enabled: checked(el, "#ck-enabled"),
+          clientId: val(el, "#ck-id"),
+          redirectUri: val(el, "#ck-redirect"),
+        },
       };
       const pass = val(el, "#st-pass");
       if (el.querySelector("#st-clear-pass")?.checked) patch.smtp.pass = "__clear__";
@@ -1276,6 +1345,9 @@ function wireAdmin(el, ctx) {
       const vk = val(el, "#vt-key");
       if (el.querySelector("#vt-clear")?.checked) patch.virustotal.apiKey = "__clear__";
       else if (vk) patch.virustotal.apiKey = vk;
+      const cks = val(el, "#ck-secret");
+      if (el.querySelector("#ck-clear")?.checked) patch.cnkd.clientSecret = "__clear__";
+      else if (cks) patch.cnkd.clientSecret = cks;
 
       busy(saveSettings, true, "保存中…");
       try {

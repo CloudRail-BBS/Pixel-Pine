@@ -120,14 +120,8 @@ server {
 | `PS_MODE` | 否 | `local`（默认，本机自足）或 `cloud` |
 | `PS_DATA_DIR` | 否 | 本地模式数据目录，默认 `/app/data` |
 | `PORT` | 否 | 监听端口，默认 3000 |
-| `GEETEST_CAPTCHA_ID` | 否 | 极验 Captcha ID |
-| `GEETEST_CAPTCHA_KEY` | 否 | 极验 Captcha Key（仅服务端） |
-| `CNKD_CLIENT_ID` | 否 | CNKD 一证通行客户端 ID |
-| `CNKD_CLIENT_SECRET` | 否 | 仅 `confidential` 应用需要 |
-| `CNKD_REDIRECT_URI` | 否 | 必须与 CNKD 登记值逐字一致 |
-| `VT_API_KEY` | 否 | VirusTotal API key，用于按 SHA-256 查询病毒扫描结果 |
 
-未配置时对应功能自动降级：极验跳过验证、CNKD 按钮置灰，登录仍可用。`/api/health` 会如实报告状态。
+**邮件、人机验证、病毒扫描、CNKD 登录都不在这里配**：登录主办方后台 →「设置」，填完保存立即生效，密钥只存服务端。未配置时对应功能自动降级：极验跳过验证、CNKD 按钮不显示、病毒扫描显示未启用，登录与提交仍可用。`/api/health` 会如实报告状态。
 
 ## 两种运行模式
 
@@ -157,7 +151,7 @@ docker run --rm -v pixelpine_pixelsong-data:/d -v $PWD:/b alpine tar czf /b/back
 
 ### 想用云端模式
 
-`PS_MODE=cloud`，并按需配 `PS_UPSTREAM`（同源代理）或 `PS_ENDPOINT`（直连）。这一模式只用于官方站，自建一般不需要。
+`PS_MODE=cloud`，并按需配 `PS_UPSTREAM`（同源代理）或 `PS_ENDPOINT`（直连）。这两个变量只在 cloud 模式下有意义，本地模式完全忽略；自建一般不需要。
 
 ---
 

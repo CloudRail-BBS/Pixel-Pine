@@ -33,6 +33,7 @@ const DEFAULT_SETTINGS = {
   },
   geetest: { enabled: false, captchaId: "", captchaKey: "" },
   virustotal: { enabled: false, apiKey: "" },
+  cnkd: { enabled: false, clientId: "", clientSecret: "", redirectUri: "" },
 };
 
 let DATA_DIR = "";
@@ -842,6 +843,7 @@ function maskSettings() {
     smtp: { ...s.smtp, pass: "", hasPass: Boolean(s.smtp.pass) },
     geetest: { ...s.geetest, captchaKey: "", hasKey: Boolean(s.geetest.captchaKey) },
     virustotal: { ...s.virustotal, apiKey: "", hasKey: Boolean(s.virustotal.apiKey) },
+    cnkd: { ...(s.cnkd || {}), clientSecret: "", hasSecret: Boolean(s.cnkd && s.cnkd.clientSecret) },
   };
 }
 
@@ -872,11 +874,11 @@ async function handleSettings(req, res, url, ctx) {
     const body = await readJson(req);
     const s = getSettings();
     const patch = body || {};
-    for (const key of ["smtp", "geetest", "virustotal"]) {
+    for (const key of ["smtp", "geetest", "virustotal", "cnkd"]) {
       if (!patch[key] || typeof patch[key] !== "object") continue;
       const next = { ...s[key] };
       for (const [k, v] of Object.entries(patch[key])) {
-        if (k === "pass" || k === "captchaKey" || k === "apiKey") {
+        if (k === "pass" || k === "captchaKey" || k === "apiKey" || k === "clientSecret") {
           if (v === "__clear__") next[k] = "";
           else if (typeof v === "string" && v.trim()) next[k] = v.trim();
           continue;
