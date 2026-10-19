@@ -170,12 +170,11 @@ function certDocument(c, issuer, meta = {}) {
           </div>
         </div>
 
-        <p class="cert-note">本证书可在像素松平台「证书核验」页输入编号验证真伪</p>
-        ${
-          issuer.co && issuer.co.length
-            ? `<p class="cert-colophon">协办单位　${esc(issuer.co.join("　"))}</p>`
-            : ""
-        }
+        <p class="cert-note">
+          本证书可在像素松平台「证书核验」页输入编号验证真伪${
+            issuer.co && issuer.co.length ? `　·　协办单位　${esc(issuer.co.join("　"))}` : ""
+          }
+        </p>
         <div class="cert-microtext" aria-hidden="true">${esc(micro)}</div>
       </div>
     </div>

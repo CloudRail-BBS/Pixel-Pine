@@ -674,8 +674,8 @@ input[type="checkbox"] { accent-color: var(--accent-dim); }
 .auth-tabs button.on { background: var(--surface-3); color: var(--text); box-shadow: var(--shadow-1); }
 
 /* ---------- 证书 ---------- */
-.cert-shell { padding: 22px 16px 90px; display: flex; flex-direction: column; align-items: center; gap: 16px; }
-.cert-toolbar { width: min(100%, 1000px); display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.cert-shell { padding: 22px 16px 90px; width: 100%; box-sizing: border-box; display: flex; flex-direction: column; align-items: center; gap: 16px; }
+.cert-toolbar { width: min(100%, 1000px); display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; }
 .cert-page {
   width: min(100%, 1000px);
   aspect-ratio: 297 / 210;
@@ -962,7 +962,7 @@ a.org-card:hover .org-out { opacity: 1; }
     inset 0 0 0 3px #faf6ea,
     inset 0 0 0 4px var(--cert-line-soft),
     inset 0 0 70px rgba(140, 112, 60, 0.09);
-  padding: 2em 3em 1.6em;
+  padding: 1.8em 2.8em 3em;
 }
 .cert-page--formal .cert-inner::before,
 .cert-page--formal .cert-inner::after { content: none; }
@@ -1000,7 +1000,7 @@ a.org-card:hover .org-out { opacity: 1; }
 .cert-page--formal .cert-body {
   flex: 1;
   display: flex; flex-direction: column; align-items: center; justify-content: center;
-  text-align: center; padding: 0.8em 0 1.4em;
+  text-align: center; padding: 0.5em 0 0.9em;
 }
 .cert-eyebrow {
   font-family: var(--mono); font-size: 0.68em; letter-spacing: 0.44em;
@@ -1012,7 +1012,7 @@ a.org-card:hover .org-out { opacity: 1; }
   letter-spacing: 0.3em; text-indent: 0.3em;
   color: var(--cert-ink); margin: 0 0 0.55em;
 }
-.cert-orn { display: flex; align-items: center; gap: 0.55em; margin-bottom: 1.5em; }
+.cert-orn { display: flex; align-items: center; gap: 0.55em; margin-bottom: 1.1em; }
 .cert-orn i {
   width: 3.4em; height: 1px;
   background: linear-gradient(90deg, transparent, var(--cert-line));
@@ -1115,7 +1115,7 @@ a.org-card:hover .org-out { opacity: 1; }
 }
 .cert-sign { display: flex; flex-direction: column; align-items: center; gap: 0.12em; }
 .cert-sign .cert-seal--svg {
-  position: static; width: 5.6em; height: 5.6em;
+  position: static; width: 5em; height: 5em;
   border: none; border-radius: 0; opacity: 0.84;
   transform: rotate(-6deg); margin-bottom: -0.1em;
 }
@@ -1124,7 +1124,8 @@ a.org-card:hover .org-out { opacity: 1; }
   letter-spacing: 0.18em; text-indent: 0.18em; color: #3a352b;
 }
 .cert-page--formal .cert-note {
-  margin: 0.9em 0 0; font-size: 0.68em; color: #a89c82; letter-spacing: 0.06em;
+  position: absolute; left: 2.8em; right: 2.8em; bottom: 0.8em; margin: 0;
+  font-size: 0.62em; color: #a89c82; letter-spacing: 0.04em; line-height: 1.45;
   text-align: center;
 }
 
@@ -1241,13 +1242,13 @@ a.org-card:hover .org-out { opacity: 1; }
 
 /* 协办署名 */
 .cert-colophon {
-  margin: 0.5em 0 0; text-align: center;
-  font-size: 0.62em; letter-spacing: 0.14em; color: #a2977f;
+  margin: 0.14em 0 0; text-align: center;
+  font-size: 0.6em; letter-spacing: 0.14em; color: #a2977f; line-height: 1.5;
 }
 
 /* 微缩防伪文字 */
 .cert-microtext {
-  margin-top: 0.85em;
+  position: absolute; left: 2.8em; right: 2.8em; bottom: 2.4em; margin: 0;
   font-family: var(--mono); font-size: 0.38em; letter-spacing: 0.3em;
   line-height: 1; color: #b3a88f; opacity: 0.85;
   white-space: nowrap; overflow: hidden; text-align: center;
