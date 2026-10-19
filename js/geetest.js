@@ -126,6 +126,7 @@ export async function verifyCaptcha(prefetched) {
     let inited = false;
     let solveTimer = null;
     let popupTimer = null;
+    let inst = null;
 
     const finish = (result) => {
       if (settled) return;
@@ -133,6 +134,10 @@ export async function verifyCaptcha(prefetched) {
       clearTimeout(initTimer);
       clearTimeout(solveTimer);
       if (popupTimer) clearInterval(popupTimer);
+      // 及时销毁，避免多次点击后 body 里堆多套 0 高度节点
+      try {
+        if (inst && typeof inst.destroy === "function") inst.destroy();
+      } catch (_) {}
       console.info("[geetest] 结果", result.ok ? "通过" : "未通过", result.reason || "", `耗时=${Math.round(performance.now() - t0)}ms`);
       resolve(result);
     };
@@ -157,6 +162,7 @@ export async function verifyCaptcha(prefetched) {
         },
         (captcha) => {
           inited = true;
+          inst = captcha;
           clearTimeout(initTimer);
           console.info(
             `[geetest] 组件回调 ${Math.round(performance.now() - t0)}ms`,
@@ -249,6 +255,13 @@ export async function verifyCaptcha(prefetched) {
                   }),
                   `body=${document.body.clientWidth}x${document.body.clientHeight}`
                 );
+                try {
+                  const res = performance
+                    .getEntriesByType("resource")
+                    .filter((e) => /geetest/.test(e.name))
+                    .map((e) => `${e.name.replace(/^https?:\/\//, "").slice(0, 60)} ${Math.round(e.duration)}ms ${e.transferSize || 0}B`);
+                  console.info("[geetest] 相关网络请求:", res.slice(-10));
+                } catch (_) {}
                 finish({
                   ok: false,
                   reason: "人机验证没有弹出，请检查极验 Captcha ID 与域名白名单",
