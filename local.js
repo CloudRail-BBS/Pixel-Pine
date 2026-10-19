@@ -34,8 +34,8 @@ const DEFAULT_SETTINGS = {
   geetest: { enabled: false, captchaId: "", captchaKey: "" },
   virustotal: { enabled: false, apiKey: "" },
   cnkd: { enabled: false, clientId: "", clientSecret: "", redirectUri: "" },
-  // 捐助渠道：目前支持爱发电主页链接，仅在首页底部展示一个低调入口
-  donate: { enabled: false, url: "", title: "", note: "" },
+  // 捐助渠道：首页展示入口；afdian* 用于从爱发电开放平台拉取赞助记录
+  donate: { enabled: false, url: "", title: "", note: "", afdianUserId: "", afdianToken: "" },
 };
 
 let DATA_DIR = "";
@@ -918,6 +918,9 @@ function maskSettings() {
       url: (s.donate && s.donate.url) || "",
       title: (s.donate && s.donate.title) || "",
       note: (s.donate && s.donate.note) || "",
+      afdianUserId: (s.donate && s.donate.afdianUserId) || "",
+      afdianToken: "",
+      hasAfdianToken: Boolean(s.donate && s.donate.afdianToken),
     },
   };
 }
@@ -953,7 +956,7 @@ async function handleSettings(req, res, url, ctx) {
       if (!patch[key] || typeof patch[key] !== "object") continue;
       const next = { ...s[key] };
       for (const [k, v] of Object.entries(patch[key])) {
-        if (k === "pass" || k === "captchaKey" || k === "apiKey" || k === "clientSecret") {
+        if (k === "pass" || k === "captchaKey" || k === "apiKey" || k === "clientSecret" || k === "afdianToken") {
           if (v === "__clear__") next[k] = "";
           else if (typeof v === "string" && v.trim()) next[k] = v.trim();
           continue;
@@ -1006,4 +1009,4 @@ async function handle(req, res, url) {
   }
 }
 
-module.exports = { init, handle, rows, getSettings };
+module.exports = { init, handle, rows, getSettings, currentUser };

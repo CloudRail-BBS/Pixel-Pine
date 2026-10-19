@@ -1,6 +1,6 @@
 import {
   state, shell, bindShell, navigate, toast, esc, fmtDate, fmtFull, timeLeft, ago,
-  requireLogin, busy, errMsg, modal, confirmBox, db, unwrap, isAdmin,
+  requireLogin, busy, errMsg, modal, confirmBox, db, unwrap, isAdmin, invalidate,
 } from "./core.js";
 import { TRACKS, trackOf, STATUS_TEXT, TEAM_STATUS, DIMENSIONS, AWARDS, PARTNER_ROLES, partnerRoleOf } from "./config.js";
 import {
@@ -650,6 +650,7 @@ function sponsorsTab(sponsors) {
       </div>
       <div class="row row-wrap" style="gap:10px">
         <button class="btn btn-primary" id="btn-add-sponsor">+ 添加赞助者</button>
+        <button class="btn" id="btn-sync-afdian">从爱发电同步</button>
         <a class="btn btn-ghost" href="#/sponsors" target="_blank" rel="noopener">预览鸣谢页</a>
       </div>
     </div>
@@ -751,6 +752,95 @@ function openSponsorForm(el, existing) {
       },
     }
   );
+}
+
+/** 从爱发电拉取赞助者并按 external_id 合并：只更新称呼/金额/头像，保留人工设置的留言与公开开关 */
+async function syncAfdianSponsors(el, btn) {
+  if (
+    !(await confirmBox(
+      "从爱发电同步",
+      "将拉取爱发电的全部赞助者，称呼与头像会出现在公开鸣谢页；金额默认不公开，可逐条修改。",
+      "开始同步"
+    ))
+  )
+    return;
+
+  busy(btn, true, "拉取中…");
+  try {
+    const r = await fetch("/api/donate/afdian/sponsors", {
+      headers: { accept: "application/json" },
+      cache: "no-store",
+    });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok || !j.ok) throw new Error(j.error || "拉取失败");
+
+    const remote = Array.isArray(j.list) ? j.list : [];
+    if (!remote.length) {
+      toast("爱发电还没有赞助记录", "err");
+      busy(btn, false);
+      return;
+    }
+
+    const localRows = await listSponsors().catch(() => []);
+    const byExt = new Map(
+      (localRows || []).filter((s) => s.external_id).map((s) => [String(s.external_id), s])
+    );
+
+    let added = 0;
+    let updated = 0;
+    let skipped = 0;
+
+    for (const s of remote) {
+      const nextAmount = Number(s.amount) || 0;
+      const nextAvatar = s.avatar_url || null;
+      const hit = byExt.get(String(s.external_id));
+      if (hit) {
+        // 已存在的记录只刷新金额与头像，保留主办方改过的称呼、留言与公开开关
+        const same =
+          Number(hit.amount || 0) === nextAmount &&
+          String(hit.avatar_url || "") === String(nextAvatar || "");
+        if (same) {
+          skipped++;
+          continue;
+        }
+        unwrap(
+          await db
+            .from("sponsors")
+            .update({ amount: nextAmount, avatar_url: nextAvatar })
+            .eq("id", hit.id)
+            .select()
+        );
+        updated++;
+      } else {
+        unwrap(
+          await db
+            .from("sponsors")
+            .insert({
+              name: s.name || "匿名支持者",
+              amount: nextAmount,
+              avatar_url: nextAvatar,
+              show_amount: false,
+              source: "afdian",
+              external_id: String(s.external_id),
+              sort: 100,
+              created_at: s.first_pay_at || new Date().toISOString(),
+            })
+            .select()
+        );
+        added++;
+      }
+    }
+
+    invalidate("sponsors");
+    toast(
+      `同步完成：新增 ${added} 位，更新 ${updated} 位${skipped ? `，${skipped} 位无变化` : ""}`,
+      "ok"
+    );
+    adminView(el, "#/admin/sponsors");
+  } catch (e) {
+    toast(errMsg(e, "同步失败"), "err");
+    busy(btn, false);
+  }
 }
 
 /* ------------------------------ 评委团队 ------------------------------ */
@@ -1141,6 +1231,26 @@ function settingsTab(cfg, auth) {
           <input id="dn-note" value="${esc(dn.note || "")}" maxlength="60" placeholder="例：用于服务器与域名续费" />
         </div>
       </div>
+
+      <div class="divider" style="margin:20px 0 16px"></div>
+      <div class="card-head" style="margin-bottom:10px">
+        <h2 style="font-size:14px">爱发电开放平台</h2>
+        <span class="card-note">${dn.hasAfdianToken ? "已配置" : "可选"}</span>
+      </div>
+      <p class="small muted" style="margin-bottom:14px">
+        填写开发者后台的 user_id 与 API Token 后，可在「赞助者」页一键拉取赞助记录。
+        Token 只保存在服务器，不会下发到浏览器，也不会出现在公开页面。
+      </p>
+      <div class="grid grid-2">
+        <div class="field"><label>user_id</label>
+          <input id="dn-afdian-uid" value="${esc(dn.afdianUserId || "")}" placeholder="爱发电开发者后台的 user_id" />
+        </div>
+        <div class="field"><label>API Token</label>
+          <input id="dn-afdian-token" type="password" placeholder="${dn.hasAfdianToken ? "已保存，留空不修改" : "开发者后台生成的 Token"}" autocomplete="new-password" />
+          ${secretHint(dn.hasAfdianToken, "用于服务端签名，只存于本地数据卷")}
+        </div>
+      </div>
+      ${dn.hasAfdianToken ? `<label class="row" style="gap:7px;cursor:pointer"><input type="checkbox" id="dn-afdian-clear" /><span class="small">清除已保存的 Token</span></label>` : ""}
     </div>
 
     <div class="card block">
@@ -1521,8 +1631,12 @@ function wireAdmin(el, ctx) {
           url: val(el, "#dn-url"),
           title: val(el, "#dn-title"),
           note: val(el, "#dn-note"),
+          afdianUserId: val(el, "#dn-afdian-uid"),
         },
       };
+      const afToken = val(el, "#dn-afdian-token");
+      if (el.querySelector("#dn-afdian-clear")?.checked) patch.donate.afdianToken = "__clear__";
+      else if (afToken) patch.donate.afdianToken = afToken;
       if (patch.donate.enabled && !/^https:\/\/(?:www\.)?(afdian\.com|afdian\.net)\//i.test(patch.donate.url)) {
         return toast("请填写爱发电主页链接，形如 https://afdian.com/a/yourname", "err");
       }
@@ -1645,6 +1759,9 @@ function wireAdmin(el, ctx) {
 
   const addSponsor = el.querySelector("#btn-add-sponsor");
   if (addSponsor) addSponsor.onclick = () => openSponsorForm(el, null);
+
+  const syncSponsor = el.querySelector("#btn-sync-afdian");
+  if (syncSponsor) syncSponsor.onclick = () => syncAfdianSponsors(el, syncSponsor);
 
   el.querySelectorAll("[data-edit-sponsor]").forEach((b) => {
     b.onclick = () => {

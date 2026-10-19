@@ -44,6 +44,10 @@ const CNKD_SCOPE = "profile.basic profile.status";
 const CNKD_PENDING_TTL = 10 * 60 * 1000;
 const CNKD_TICKET_TTL = 5 * 60 * 1000;
 
+// 爱发电开放平台：user_id + token 只留在服务端，浏览器只拿到整理后的赞助者列表
+const AFDIAN_API = (process.env.AFDIAN_API || "https://afdian.com/api/open").replace(/\/+$/, "");
+const AFDIAN_TIMEOUT = 15000;
+
 const VT_KEY = process.env.VT_API_KEY || "";
 
 /** 本地模式下配置存在库里，云端模式仍读环境变量 */
@@ -339,6 +343,115 @@ function sendRedirect(res, location) {
     "Referrer-Policy": "no-referrer",
   });
   res.end();
+}
+
+/* ------------------------- 爱发电开放平台 ------------------------- */
+
+/** 本地模式读后台设置，云端模式读环境变量；Token 永远不下发浏览器 */
+function afdianCfg() {
+  const d = (LOCAL_MODE && local.getSettings().donate) || {};
+  return {
+    userId: String(d.afdianUserId || process.env.AFDIAN_USER_ID || "").trim(),
+    token: String(d.afdianToken || process.env.AFDIAN_TOKEN || "").trim(),
+  };
+}
+
+/**
+ * sign = md5(token + "params" + params + "ts" + ts + "user_id" + user_id)
+ * 其中 params 必须是实际发送的同一段 JSON 字符串，不能重新序列化。
+ */
+function afdianSign(token, params, ts, userId) {
+  return crypto
+    .createHash("md5")
+    .update(`${token}params${params}ts${ts}user_id${userId}`)
+    .digest("hex");
+}
+
+const AFDIAN_ERRORS = {
+  400001: "请求参数不完整",
+  400002: "请求时间戳已过期，请检查服务器时间是否准确",
+  400003: "params 不是合法的 JSON",
+  400004: "API Token 无效，请到爱发电开发者后台重新生成",
+  400005: "签名校验失败，请确认 user_id 与 Token 是否配对",
+};
+
+async function afdianCall(path, params) {
+  const c = afdianCfg();
+  if (!c.userId || !c.token) {
+    throw new Error("尚未配置爱发电 user_id 与 API Token，请先到后台「设置 → 捐助渠道」填写");
+  }
+
+  const paramsStr = JSON.stringify(params || {});
+  const ts = Math.floor(Date.now() / 1000);
+  const body = JSON.stringify({
+    user_id: c.userId,
+    params: paramsStr,
+    ts,
+    sign: afdianSign(c.token, paramsStr, ts, c.userId),
+  });
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), AFDIAN_TIMEOUT);
+  let resp;
+  try {
+    resp = await fetch(AFDIAN_API + path, {
+      method: "POST",
+      headers: { "content-type": "application/json", accept: "application/json" },
+      body,
+      signal: controller.signal,
+    });
+  } catch (e) {
+    throw new Error(e.name === "AbortError" ? "爱发电接口超时，请稍后重试" : "无法连接爱发电接口：" + e.message);
+  } finally {
+    clearTimeout(timer);
+  }
+
+  const json = await resp.json().catch(() => null);
+  if (!json) throw new Error(`爱发电返回了非 JSON 内容（HTTP ${resp.status}）`);
+  if (json.ec !== 200) {
+    const msg =
+      AFDIAN_ERRORS[json.ec] ||
+      json.em ||
+      (json.data && (json.data.error || json.data.message)) ||
+      `爱发电接口返回错误（ec=${json.ec}）`;
+    throw new Error(msg);
+  }
+  return json.data || {};
+}
+
+/** 拉取全部赞助者（每页 20，最多 40 页，足够覆盖小型赛事） */
+async function afdianSponsors() {
+  const out = [];
+  const seen = new Set();
+  let page = 1;
+  let totalPage = 1;
+
+  do {
+    const data = await afdianCall("/query-sponsor", { page });
+    totalPage = Math.min(Math.max(Number(data.total_page) || 1, 1), 40);
+
+    for (const s of data.list || []) {
+      const user = s.user || {};
+      const id = String(user.user_id || "").trim();
+      if (!id || seen.has(id)) continue;
+      seen.add(id);
+
+      const amount = Number(s.all_sum_amount);
+      const first = Number(s.first_pay_time) || Number(s.create_time) || 0;
+      const last = Number(s.last_pay_time) || 0;
+      out.push({
+        external_id: id,
+        name: String(user.name || "").trim() || "匿名支持者",
+        avatar_url: user.avatar || null,
+        amount: Number.isFinite(amount) ? amount : 0,
+        first_pay_at: first ? new Date(first * 1000).toISOString() : null,
+        last_pay_at: last ? new Date(last * 1000).toISOString() : null,
+      });
+    }
+    page++;
+  } while (page <= totalPage);
+
+  return out;
 }
 
 /* ------------------------------- 静态文件 ------------------------------- */
@@ -785,6 +898,24 @@ const server = http.createServer({ maxHeaderSize: 64 * 1024 }, async (req, res) 
     }
     cnkdTickets.delete(ticket);
     return sendJson(res, 200, { ok: true, profile: rec.profile });
+  }
+
+  if (url.pathname === "/api/donate/afdian/sponsors") {
+    if (!LOCAL_MODE) {
+      return sendJson(res, 400, {
+        ok: false,
+        error: "云端模式不支持服务端代拉：请设置 AFDIAN_USER_ID 与 AFDIAN_TOKEN 环境变量，并通过后台手动录入",
+      });
+    }
+    const u = local.currentUser(req);
+    if (!u) return sendJson(res, 401, { ok: false, error: "请先登录" });
+    if (u.role !== "admin") return sendJson(res, 403, { ok: false, error: "需要主办方权限" });
+    try {
+      const list = await afdianSponsors();
+      return sendJson(res, 200, { ok: true, list });
+    } catch (e) {
+      return sendJson(res, 502, { ok: false, error: e.message || "同步失败" });
+    }
   }
 
   if (LOCAL_MODE && url.pathname.startsWith("/.cloud/local/")) {

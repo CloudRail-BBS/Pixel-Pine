@@ -279,11 +279,14 @@ function sponsorMark(name) {
 function sponsorCard(s) {
   return `
     <article class="sponsor-card">
-      <span class="sponsor-avatar">${
-        s.avatar_url
-          ? `<img src="${esc(s.avatar_url)}" alt="" loading="lazy" />`
-          : esc(sponsorMark(s.name))
-      }</span>
+      <span class="sponsor-avatar">
+        <b>${esc(sponsorMark(s.name))}</b>
+        ${
+          s.avatar_url
+            ? `<img src="${esc(s.avatar_url)}" alt="" loading="lazy" onerror="this.remove()" />`
+            : ""
+        }
+      </span>
       <div class="sponsor-body">
         <div class="sponsor-line">
           <b class="sponsor-name">${esc(s.name)}</b>
