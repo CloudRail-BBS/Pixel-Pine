@@ -1124,7 +1124,7 @@ a.org-card:hover .org-out { opacity: 1; }
   letter-spacing: 0.18em; text-indent: 0.18em; color: #3a352b;
 }
 .cert-page--formal .cert-note {
-  position: absolute; left: 2.8em; right: 2.8em; bottom: 0.8em; margin: 0;
+  position: absolute; left: 2.8em; right: 2.8em; bottom: 1.05em; z-index: 2; margin: 0;
   font-size: 0.62em; color: #a89c82; letter-spacing: 0.04em; line-height: 1.45;
   text-align: center;
 }
@@ -1196,13 +1196,12 @@ a.org-card:hover .org-out { opacity: 1; }
 .rg-check input:disabled + span { opacity: 0.55; }
 
 /* ---------- 证书：水印与附加元素 ---------- */
+/* 只给仍在流里的块设 relative；note 与 microtext 是绝对定位贴底的，
+   放进来会覆盖它们的 position，导致又回到流里与落款抢空间 */
 .cert-page--formal .cert-head,
 .cert-page--formal .cert-body,
 .cert-page--formal .cert-foot,
-.cert-page--formal .cert-close,
-.cert-page--formal .cert-note,
-.cert-page--formal .cert-colophon,
-.cert-page--formal .cert-microtext { position: relative; z-index: 1; }
+.cert-page--formal .cert-close { position: relative; z-index: 1; }
 
 /* 页眉分隔线 */
 .cert-head-rule {
@@ -1248,7 +1247,7 @@ a.org-card:hover .org-out { opacity: 1; }
 
 /* 微缩防伪文字 */
 .cert-microtext {
-  position: absolute; left: 2.8em; right: 2.8em; bottom: 2.4em; margin: 0;
+  position: absolute; left: 2.8em; right: 2.8em; bottom: 0.32em; z-index: 2; margin: 0;
   font-family: var(--mono); font-size: 0.38em; letter-spacing: 0.3em;
   line-height: 1; color: #b3a88f; opacity: 0.85;
   white-space: nowrap; overflow: hidden; text-align: center;
