@@ -203,43 +203,76 @@ export async function verifyCaptcha(prefetched) {
               reason: "极验组件版本不兼容（没有显示方法），请刷新或更换网络环境重试",
             });
           }
-          try {
-            if (typeof captcha.showCaptcha === "function") captcha.showCaptcha();
-            else if (typeof captcha.showBox === "function") captcha.showBox();
-            else captcha.verify();
-          } catch (_) {
-            return finish({ ok: false, reason: "无法打开人机验证弹窗，请刷新后重试" });
-          }
+
+          let shown = false;
+          let checkStarted = false;
+
+          const show = () => {
+            if (shown || settled) return;
+            shown = true;
+            console.info(`[geetest] 显示弹窗 ${Math.round(performance.now() - t0)}ms`);
+            try {
+              if (typeof captcha.showCaptcha === "function") captcha.showCaptcha();
+              else if (typeof captcha.showBox === "function") captcha.showBox();
+              else captcha.verify();
+            } catch (_) {
+              finish({ ok: false, reason: "无法打开人机验证弹窗，请刷新后重试" });
+              return;
+            }
+            startPopupCheck();
+          };
 
           // 配置不对时 showCaptcha 不报错、弹窗却根本不渲染，这里短轮询确认一次
-          const popupStart = Date.now();
-          popupTimer = setInterval(() => {
-            if (settled) {
-              clearInterval(popupTimer);
-              return;
-            }
-            if (geetestPopupVisible()) {
-              clearInterval(popupTimer);
-              popupTimer = null;
-              return;
-            }
-            if (Date.now() - popupStart > POPUP_TIMEOUT) {
-              clearInterval(popupTimer);
-              popupTimer = null;
-              const all = document.querySelectorAll('[class*="geetest"], [id*="geetest"], iframe[src*="geetest"]');
-              console.info(
-                "[geetest] 未检测到可见弹窗，相关节点 " + all.length + " 个:",
-                [...all].slice(0, 8).map((n) => {
-                  const r = n.getBoundingClientRect();
-                  return `${n.tagName}.${String(n.className || n.id).slice(0, 36)} ${Math.round(r.width)}x${Math.round(r.height)}`;
-                })
-              );
-              finish({
-                ok: false,
-                reason: "人机验证没有弹出，请检查极验 Captcha ID 与域名白名单",
-              });
-            }
-          }, 400);
+          function startPopupCheck() {
+            if (checkStarted || settled) return;
+            checkStarted = true;
+            const popupStart = Date.now();
+            popupTimer = setInterval(() => {
+              if (settled) {
+                clearInterval(popupTimer);
+                return;
+              }
+              if (geetestPopupVisible()) {
+                clearInterval(popupTimer);
+                popupTimer = null;
+                return;
+              }
+              if (Date.now() - popupStart > POPUP_TIMEOUT) {
+                clearInterval(popupTimer);
+                popupTimer = null;
+                const all = document.querySelectorAll('[class*="geetest"], [id*="geetest"], iframe[src*="geetest"]');
+                console.info(
+                  "[geetest] 未检测到可见弹窗，相关节点 " + all.length + " 个:",
+                  [...all].slice(0, 8).map((n) => {
+                    const r = n.getBoundingClientRect();
+                    return `${n.tagName}.${String(n.className || n.id).slice(0, 36)} ${Math.round(r.width)}x${Math.round(r.height)}`;
+                  }),
+                  `body=${document.body.clientWidth}x${document.body.clientHeight}`
+                );
+                finish({
+                  ok: false,
+                  reason: "人机验证没有弹出，请检查极验 Captcha ID 与域名白名单",
+                });
+              }
+            }, 400);
+          }
+
+          // 极验要求等组件 ready 后再显示；提前调用会建成 0 高度的空壳
+          if (typeof captcha.onReady === "function") {
+            captcha.onReady(() => {
+              console.info(`[geetest] onReady ${Math.round(performance.now() - t0)}ms`);
+              show();
+            });
+            // 个别版本 onReady 不触发，兜底尝试一次
+            setTimeout(() => {
+              if (!settled && !shown) {
+                console.info("[geetest] onReady 未触发，直接尝试显示");
+                show();
+              }
+            }, 2000);
+          } else {
+            show();
+          }
         }
       );
     } catch (_) {
