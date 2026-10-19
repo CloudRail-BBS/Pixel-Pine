@@ -1,5 +1,5 @@
 import { cloud, db, state, unwrap, sessionUid, isAdmin, cached, invalidate, sha256Hex } from "./core.js";
-import { DIMENSIONS, TRACKS, trackOf, INTEGRITY_DOC } from "./config.js";
+import { DIMENSIONS, TRACKS, trackOf, INTEGRITY_DOC, JUDGE_DOC } from "./config.js";
 
 const uid = () => sessionUid();
 const now = () => Date.now();
@@ -590,4 +590,110 @@ export async function ackRules({ version, hash, name }) {
     if (e?.code === "23505" || e?.error?.code === "23505") return null;
     throw e;
   }
+}
+
+/* ---------------- 评委团队 ---------------- */
+
+export async function listJudgesPublic() {
+  return cached("judges_public", 60000, async () => {
+    const rows =
+      unwrap(
+        await db.from("judges").select("*").eq("published", true).order("sort").order("created_at")
+      ) || [];
+    return rows;
+  });
+}
+
+export async function listJudgesAll() {
+  return (
+    unwrap(await db.from("judges").select("*").order("sort").order("created_at")) || []
+  );
+}
+
+export async function saveJudge(j) {
+  const payload = {
+    name: String(j.name || "").trim(),
+    title: String(j.title || "").trim() || null,
+    org: String(j.org || "").trim() || null,
+    avatar_url: String(j.avatarUrl || "").trim() || null,
+    bio: String(j.bio || "").trim() || null,
+    tracks: String(j.tracks || "").trim() || null,
+    sort: Number(j.sort) || 100,
+    published: j.published !== false,
+  };
+  if (!payload.name) throw new Error("请填写评委姓名");
+  if (j.id) {
+    const rows = unwrap(await db.from("judges").update(payload).eq("id", j.id).select());
+    if (!rows || !rows.length) throw new Error("保存失败：没有权限修改该记录");
+  } else {
+    payload.owner_id = sessionUid();
+    unwrap(await db.from("judges").insert(payload).select());
+  }
+  invalidate("judges_public");
+}
+
+export async function deleteJudge(id) {
+  const rows = unwrap(await db.from("judges").delete().eq("id", id).select());
+  if (!rows || !rows.length) throw new Error("删除失败：没有权限");
+  invalidate("judges_public");
+}
+
+/* ---------------- 评委公约签署 ---------------- */
+
+export async function getJudgeAck(doc = JUDGE_DOC) {
+  if (!uid()) return null;
+  return unwrap(
+    await db
+      .from("signatures")
+      .select("*")
+      .eq("owner_id", uid())
+      .eq("doc_key", doc.key)
+      .eq("doc_version", doc.version)
+      .maybeSingle()
+  );
+}
+
+export async function signJudgeCode({ hash, name }, doc = JUDGE_DOC) {
+  try {
+    const rows = unwrap(
+      await db
+        .from("signatures")
+        .insert({
+          doc_key: doc.key,
+          doc_version: doc.version,
+          doc_hash: hash,
+          agreed_name: name,
+          owner_name: state.me?.nickname || null,
+          user_agent: (navigator.userAgent || "").slice(0, 300),
+        })
+        .select()
+    );
+    return (rows && rows[0]) || null;
+  } catch (e) {
+    if (e?.code === "23505" || e?.error?.code === "23505") return null;
+    throw e;
+  }
+}
+
+/* ---------------- 活动介绍 ---------------- */
+
+/** 取纯文本首段：去掉标题标记与强调符号，用于首页 hero 副标题 */
+export function plainFirst(body) {
+  const block = String(body || "")
+    .split(/\n{2,}/)
+    .map((s) => s.trim())
+    .find(Boolean);
+  if (!block) return "";
+  return block
+    .replace(/^#+\s*/, "")
+    .replace(/\*\*/g, "")
+    .replace(/`/g, "")
+    .replace(/\n/g, " ")
+    .trim();
+}
+
+export async function getIntro() {
+  const doc = await getDocument("intro").catch(() => null);
+  if (!doc) return null;
+  return { ...doc, first: plainFirst(doc.body) };
 }

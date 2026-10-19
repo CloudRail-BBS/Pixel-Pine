@@ -55,6 +55,14 @@ function certDocument(c, issuer, meta = {}) {
     <div class="cert-page cert-page--formal ${award ? "is-award" : "is-part"}" id="cert-print">
       <div class="cert-inner">
         <div class="cert-spine" aria-hidden="true">PIXELSONG · 像素松 · ${esc(year)}</div>
+        ${
+          award
+            ? ""
+            : `<div class="cert-spine cert-spine--r" aria-hidden="true">
+                 // BUILD ${"72H"} · TRACK-${esc(c.track)} · OUTPUT-DELIVERED · ${esc(c.cert_code)}
+               </div>
+               <div class="cert-hud" aria-hidden="true"><i></i><i></i><i></i><i></i></div>`
+        }
         <div class="cert-corners"><i></i><i></i><i></i><i></i></div>
 
         <div class="cert-head">
@@ -72,13 +80,23 @@ function certDocument(c, issuer, meta = {}) {
         <div class="cert-body">
           <div class="cert-eyebrow">${esc(track.game || "")} · ${esc(track.type || "")}</div>
           ${
-            meta.theme || meta.period
-              ? `<div class="cert-meta">
-                   ${meta.theme ? `<span>本届主题 · ${esc(meta.theme)}</span>` : ""}
-                   ${meta.theme && meta.period ? `<i></i>` : ""}
-                   ${meta.period ? `<span>${esc(meta.period)}</span>` : ""}
-                 </div>`
-              : ""
+            award
+              ? meta.theme || meta.period
+                ? `<div class="cert-meta">
+                     ${meta.theme ? `<span>本届主题 · ${esc(meta.theme)}</span>` : ""}
+                     ${meta.theme && meta.period ? `<i></i>` : ""}
+                     ${meta.period ? `<span>${esc(meta.period)}</span>` : ""}
+                   </div>`
+                : ""
+              : `<div class="cert-meta cert-meta--code"><span>// ${esc(
+                  [
+                    meta.theme ? `THEME ${meta.theme}` : "",
+                    "WINDOW 72H",
+                    meta.period ? meta.period.replace(/\s/g, "") : "",
+                  ]
+                    .filter(Boolean)
+                    .join("  ·  ")
+                )}</span></div>`
           }
           <h1 class="cert-kind">${award ? "获奖证书" : "参赛证书"}</h1>
           ${
@@ -104,9 +122,9 @@ function certDocument(c, issuer, meta = {}) {
                    全程遵守赛事规则与诚信比赛公约。
                  </p>
                  <div class="cert-facts">
-                   <div><span>赛道</span><b>${esc(c.track)} · ${esc(track.name)}</b></div>
-                   <div><span>参赛作品</span><b>${esc(c.work_title)}</b></div>
-                   <div><span>团队</span><b>${esc(c.team_name || "参赛队伍")}</b></div>
+                   <div><span>[ 赛道 ]</span><b>${esc(c.track)} · ${esc(track.name)}</b></div>
+                   <div><span>[ 作品 ]</span><b>${esc(c.work_title)}</b></div>
+                   <div><span>[ 团队 ]</span><b>${esc(c.team_name || "参赛队伍")}</b></div>
                  </div>`
           }
         </div>

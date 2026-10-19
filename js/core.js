@@ -323,6 +323,7 @@ export function navItems() {
     ["/rules", "规则"],
     ["/works", "参赛作品"],
     ["/results", "结果"],
+    ["/judges", "评委团"],
     ["/notices", "公告"],
   ];
   if (state.session) {

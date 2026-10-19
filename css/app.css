@@ -1142,3 +1142,73 @@ a.org-card:hover .org-out { opacity: 1; }
   line-height: 1; color: #b3a88f; opacity: 0.85;
   white-space: nowrap; overflow: hidden; text-align: center;
 }
+
+/* ---------- 评委团 ---------- */
+.judge-card {
+  display: flex; flex-direction: column; gap: 7px;
+  padding: 18px 18px 16px;
+  border: 1px solid var(--line); border-radius: 12px;
+  background: rgba(255, 255, 255, 0.018);
+  transition: border-color 0.2s var(--ease), transform 0.2s var(--ease);
+}
+.judge-card:hover { border-color: var(--line-strong); transform: translateY(-2px); }
+.judge-ava {
+  width: 54px; height: 54px; border-radius: 50%; overflow: hidden;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--surface-3); border: 1px solid var(--line-strong);
+  font-family: var(--mono); font-size: 17px; color: var(--muted);
+  margin-bottom: 4px;
+}
+.judge-ava img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.judge-name { font-size: 15px; font-weight: 500; letter-spacing: 0.02em; }
+.judge-role { font-size: 11.5px; color: var(--dim); }
+.judge-bio { font-size: 12px; color: var(--muted); line-height: 1.72; margin: 2px 0 0; }
+
+.code-list { list-style: none; padding: 0; margin: 0 0 16px; display: flex; flex-direction: column; gap: 9px; }
+.code-list li { display: flex; gap: 12px; font-size: 12.5px; color: var(--muted); line-height: 1.75; }
+.code-list li > span:last-child { flex: 1; min-width: 0; }
+.code-list li > .mono { flex: 0 0 auto; padding-top: 2px; }
+
+/* ---------- 参赛证书：代码风 ---------- */
+.cert-page--formal.is-part {
+  --cert-accent: #0f6b5e;
+  --cert-accent-soft: rgba(15, 107, 94, 0.13);
+}
+/* 右缘注释 */
+.cert-spine--r {
+  left: auto; right: 0.9em;
+  color: #8fa39c; opacity: 0.55;
+  letter-spacing: 0.34em;
+}
+/* 四角准星 */
+.cert-hud { position: absolute; inset: 1.5em; z-index: 0; pointer-events: none; }
+.cert-hud i {
+  position: absolute; width: 0.7em; height: 0.7em;
+  opacity: 0.5;
+}
+.cert-hud i::before,
+.cert-hud i::after {
+  content: ""; position: absolute; background: var(--cert-accent);
+}
+.cert-hud i::before { left: 50%; top: 0; width: 1px; height: 100%; margin-left: -0.5px; }
+.cert-hud i::after { top: 50%; left: 0; height: 1px; width: 100%; margin-top: -0.5px; }
+.cert-hud i:nth-child(1) { top: 0; left: 0; }
+.cert-hud i:nth-child(2) { top: 0; right: 0; }
+.cert-hud i:nth-child(3) { bottom: 0; left: 0; }
+.cert-hud i:nth-child(4) { bottom: 0; right: 0; }
+/* 记录带改为数据字段 */
+.cert-page--formal.is-part .cert-facts { border-color: rgba(15, 107, 94, 0.28); }
+.cert-page--formal.is-part .cert-facts > div { border-left-color: rgba(15, 107, 94, 0.22); }
+.cert-page--formal.is-part .cert-facts span {
+  font-size: 0.6em; letter-spacing: 0.18em; color: #6f8b84;
+}
+
+/* 代码风元信息行 */
+.cert-page--formal.is-part .cert-meta--code {
+  font-size: 0.6em; letter-spacing: 0.16em; color: #6f8b84;
+  justify-content: center;
+}
+.cert-page--formal.is-part .cert-meta--code span { text-indent: 0; }
+.cert-page--formal.is-part .cert-spine--r {
+  font-size: 0.5em; color: #7b9a92; opacity: 0.62;
+}

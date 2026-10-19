@@ -14,7 +14,7 @@ import {
   listAnnouncements, createAnnouncement, deleteAnnouncement, fileAppeal, listMyAppeals,
   listAllAppeals, replyAppeal, saveActivity, canEditSubmission,
   getMySignature, listSignaturesFor, signIntegrity, listMyCertificates,
-  rulesFingerprint, getRulesAck, ackRules,
+  rulesFingerprint, getRulesAck, ackRules, getJudgeAck,
 } from "./api.js";
 
 const val = (root, sel) => (root.querySelector(sel)?.value || "").trim();
@@ -810,6 +810,22 @@ export async function judgeView(el) {
     bindShell();
     return;
   }
+  const codeAck = await getJudgeAck().catch(() => null);
+  if (!codeAck) {
+    el.innerHTML = shell(`
+      <div class="empty" style="max-width:560px;margin:56px auto;text-align:left">
+        <div class="block-head" style="margin-bottom:12px"><h2>先签署评委公约</h2></div>
+        <p class="small muted" style="margin-bottom:8px">评审入口在签署《评委公约》后开放。这是为了让每一分都有人负责。</p>
+        <p class="tiny dim" style="margin-bottom:18px">公约包含回避义务、保密义务与独立打分要求，共 10 条，大约 2 分钟读完。</p>
+        <div class="row row-wrap" style="gap:9px">
+          <a class="btn btn-primary" href="#/judges">阅读并签署</a>
+          <a class="btn btn-ghost" href="#/me">返回我的</a>
+        </div>
+      </div>`);
+    bindShell();
+    return;
+  }
+
   const reviews = await myReviews();
   let subs = [];
   try { subs = await allSubmissions(); } catch (_) {}

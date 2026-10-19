@@ -1,11 +1,14 @@
 import {
   cloud, state, shell, bindShell, navigate, toast, esc, fmtDate, fmtFull, timeLeft, ago,
-  loadMe, loadActivity, requireLogin, busy, errMsg, db, unwrap, renderDoc,
+  loadMe, loadActivity, requireLogin, busy, errMsg, db, unwrap, renderDoc, isStaff, sha256Hex,
 } from "./core.js";
-import { TRACKS, trackOf, DIMENSIONS, DEFAULT_ACTIVITY, PARTNER_ROLES } from "./config.js";
+import {
+  TRACKS, trackOf, DIMENSIONS, DEFAULT_ACTIVITY, PARTNER_ROLES, JUDGE_DOC, judgePlainText,
+} from "./config.js";
 import {
   allSubmissions, listAnnouncements, rankSubmissions, allReviews, trackCounts, awardPlan,
-  getDocument, listPartners, publicWorks, publicWork,
+  getDocument, listPartners, publicWorks, publicWork, getIntro,
+  listJudgesPublic, getJudgeAck, signJudgeCode,
 } from "./api.js";
 import { verifyCaptcha } from "./geetest.js";
 import { cnkdConfig, startCnkdLogin, fetchCnkdTicket } from "./cnkd.js";
@@ -29,6 +32,10 @@ export async function homeView(el) {
   let partners = [];
   try {
     partners = await listPartners();
+  } catch (_) {}
+  let intro = null;
+  try {
+    intro = await getIntro();
   } catch (_) {}
   if (state.session) {
     try {
@@ -57,7 +64,7 @@ export async function homeView(el) {
     <section class="hero">
       <div class="hero-eyebrow">MINECRAFT × RUSTED WARFARE</div>
       <h1>像素松 · 限时创作</h1>
-      <p class="hero-sub">全程线上，72 小时，做出一个能装进游戏、别人下载后能跑起来的模组或地图。一队 3–5 人，按赛道独立评审，不设路演。</p>
+      <p class="hero-sub">${esc(intro?.first || "全程线上，72 小时，做出一个能装进游戏、别人下载后能跑起来的模组或地图。一队 3–5 人，按赛道独立评审，不设路演。")}</p>
       <div class="row row-wrap" style="margin-top:18px;gap:8px">
         <span class="tag tag-teal">本期主题 · ${esc(a.theme)}</span>
         <span class="tag">${esc(a.venue || "")}</span>
@@ -899,6 +906,139 @@ export async function workDetailView(el, path) {
         toast("链接已复制", "ok");
       } catch (_) {
         toast(url, "ok");
+      }
+    };
+  }
+}
+
+/* ---------------------------- 评委团队 ---------------------------- */
+
+function judgeTrackList(j) {
+  const codes = String(j.tracks || "")
+    .split(/[,，、\s]+/)
+    .map((s) => s.trim().toUpperCase())
+    .filter(Boolean);
+  return TRACKS.filter((t) => codes.includes(t.code));
+}
+
+function judgeMonogram(j) {
+  const s = String(j.name || "").trim();
+  if (!s) return "·";
+  if (/^[\x00-\x7F]+$/.test(s)) {
+    return s.split(/\s+/).filter(Boolean).slice(0, 2).map((w) => w[0]).join("").toUpperCase();
+  }
+  return s.slice(0, 1);
+}
+
+function judgeCard(j) {
+  const ts = judgeTrackList(j);
+  return `
+    <div class="judge-card">
+      <div class="judge-ava">
+        ${j.avatar_url ? `<img src="${esc(j.avatar_url)}" alt="" loading="lazy" />` : `<b>${esc(judgeMonogram(j))}</b>`}
+      </div>
+      <div class="judge-name">${esc(j.name)}</div>
+      <div class="judge-role">${esc([j.title, j.org].filter(Boolean).join(" · ") || "评委")}</div>
+      ${j.bio ? `<p class="judge-bio">${esc(j.bio)}</p>` : ""}
+      ${
+        ts.length
+          ? `<div class="row row-wrap" style="gap:5px;margin-top:auto">
+               ${ts.map((t) => `<span class="tag ${t.side === "mc" ? "tag-blue" : "tag-amber"}">${esc(t.code)} · ${esc(t.name)}</span>`).join("")}
+             </div>`
+          : ""
+      }
+    </div>`;
+}
+
+export async function judgesView(el) {
+  let judges = [];
+  try {
+    judges = await listJudgesPublic();
+  } catch (_) {}
+
+  const doc = JUDGE_DOC;
+  const text = judgePlainText(doc);
+  const hash = await sha256Hex(text);
+  let ack = null;
+  if (state.session && isStaff()) ack = await getJudgeAck(doc).catch(() => null);
+
+  el.innerHTML = shell(`
+    <div class="block-head"><h2>评委团队</h2><span class="card-note">${judges.length} 位</span></div>
+
+    <div class="card block">
+      <p class="small muted" style="margin:0 0 10px;max-width:72ch">
+        评审按赛道分组进行：A、B 两条《我的世界》赛道与 C、D 两条《铁锈战争》赛道各自独立打分，
+        跨赛道不直接比较。每位评委只看得到分配给自己的作品，独立打分、独立写评语，互不协商。
+      </p>
+      <p class="small dim" style="margin:0;max-width:72ch">
+        3 位评委取平均；5 位及以上去掉一个最高分与一个最低分后取平均。总分低于 60 分不授予等级奖。
+      </p>
+    </div>
+
+    ${
+      judges.length
+        ? `<div class="grid grid-3 block">${judges.map(judgeCard).join("")}</div>`
+        : `<div class="empty block">
+             <p style="margin-bottom:6px">评委名单尚未公布</p>
+             <p class="tiny">名单由主办方在评审开始前录入。</p>
+           </div>`
+    }
+
+    <div class="block" id="judge-code">
+      <div class="block-head">
+        <h2>${esc(doc.title)}</h2>
+        <span class="card-note">${esc(doc.version)} · ${esc(String(hash).slice(0, 12))}</span>
+      </div>
+      <div class="card">
+        <p class="small muted" style="margin-bottom:16px">${esc(doc.preamble)}</p>
+        <ol class="code-list">
+          ${doc.items
+            .map(
+              (t, i) =>
+                `<li><span class="mono tiny dim">${String(i + 1).padStart(2, "0")}</span><span>${esc(t)}</span></li>`
+            )
+            .join("")}
+        </ol>
+        <div class="divider"></div>
+        <p class="tiny dim" style="margin:0 0 14px">${esc(doc.footer)}</p>
+
+        ${
+          ack
+            ? `<div class="row" style="gap:10px">
+                 <span class="tag tag-teal">已签署</span>
+                 <span class="tiny dim">${esc(fmtFull(ack.created_at))} · 署名 ${esc(ack.agreed_name)}</span>
+               </div>`
+            : isStaff() && state.session
+            ? `<div class="field">
+                 <label class="row" style="gap:9px;cursor:pointer;align-items:flex-start">
+                   <input type="checkbox" id="jc-agree" style="margin-top:3px" />
+                   <span class="small">我已逐条阅读并同意上述条款，愿意承担相应责任。</span>
+                 </label>
+               </div>
+               <button class="btn btn-primary" id="btn-sign-code" disabled>签署评委公约</button>
+               <p class="tiny dim" style="margin-top:10px">未签署公约时，评审页的打分入口会被锁定。</p>`
+            : `<p class="tiny dim" style="margin:0">评委需登录并签署本公约后方可打分。</p>`
+        }
+      </div>
+    </div>
+  `);
+  bindShell();
+
+  const agree = el.querySelector("#jc-agree");
+  const btn = el.querySelector("#btn-sign-code");
+  if (agree && btn) {
+    agree.onchange = () => {
+      btn.disabled = !agree.checked;
+    };
+    btn.onclick = async () => {
+      busy(btn, true, "签署中…");
+      try {
+        await signJudgeCode({ hash, name: state.me?.nickname || "评委" }, doc);
+        toast("已签署，可以开始评审", "ok");
+        judgesView(el);
+      } catch (e) {
+        toast(errMsg(e), "err");
+        busy(btn, false);
       }
     };
   }

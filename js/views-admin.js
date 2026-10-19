@@ -10,6 +10,7 @@ import {
   setUserRole, listVersions, listDocuments, saveDocument,
   listCertificates, issueCertificates, revokeCertificate,
   listPartners, savePartner, deletePartner,
+  listJudgesAll, saveJudge, deleteJudge, getIntro, plainFirst,
 } from "./api.js";
 
 const val = (root, sel) => (root.querySelector(sel)?.value || "").trim();
@@ -20,6 +21,7 @@ const TABS = [
   { key: "teams", label: "队伍" },
   { key: "works", label: "作品" },
   { key: "review", label: "评审" },
+  { key: "judges", label: "评委" },
   { key: "results", label: "结果" },
   { key: "certs", label: "证书" },
   { key: "notices", label: "公告" },
@@ -54,7 +56,7 @@ export async function adminView(el, path) {
 
   const tab = (path || "").split("/")[2] || "overview";
 
-  const [teams, subs, reviews, notices, appeals, profiles, members, sigs, docs, certs, partners, health] = await Promise.all([
+  const [teams, subs, reviews, notices, appeals, profiles, members, sigs, docs, certs, partners, judgeList, intro, health] = await Promise.all([
     listTeams().catch(() => []),
     allSubmissions().catch(() => []),
     allReviews().catch(() => []),
@@ -66,6 +68,8 @@ export async function adminView(el, path) {
     listDocuments().catch(() => []),
     listCertificates().catch(() => []),
     listPartners().catch(() => []),
+    listJudgesAll().catch(() => []),
+    getIntro().catch(() => null),
     fetch("/api/health").then((r) => r.json()).catch(() => null),
   ]);
 
@@ -80,6 +84,7 @@ export async function adminView(el, path) {
       case "teams": return teamsTab(teams, members);
       case "works": return worksTab(subs);
       case "review": return reviewTab(reviews, profiles, subs);
+      case "judges": return judgesTab(judgeList, sigs);
       case "results": return resultsTab(subs, reviews);
       case "certs": return certsTab(subs, teams, members, certs);
       case "notices": return noticesTab(notices);
@@ -87,7 +92,7 @@ export async function adminView(el, path) {
       case "partners": return partnersTab(partners);
       case "appeals": return appealsTab(appeals);
       case "system": return systemTab(health, profiles);
-      default: return overviewTab({ teams, subs, reviews, counts, reviewed, pendingAppeals, pendingTeams, pendingWorks, health, members, profiles, sigs });
+      default: return overviewTab({ teams, subs, reviews, counts, reviewed, pendingAppeals, pendingTeams, pendingWorks, health, members, profiles, sigs, intro });
     }
   })();
 
@@ -112,7 +117,7 @@ export async function adminView(el, path) {
   `, { wide: true });
   bindShell();
 
-  wireAdmin(el, { teams, subs, reviews, notices, appeals, profiles, members, certs, partners, tab });
+  wireAdmin(el, { teams, subs, reviews, notices, appeals, profiles, members, certs, partners, judgeList, tab });
 }
 
 /* ------------------------------ 概览 ------------------------------ */
@@ -138,7 +143,24 @@ function overviewTab(d) {
     { n: d.pendingAppeals.length, t: "条申诉待处理", href: "#/admin/appeals", on: d.pendingAppeals.length > 0 },
   ].filter((x) => x.on);
 
+  const intro = d.intro;
   return `
+    <div class="card block">
+      <div class="card-head">
+        <h2>活动介绍</h2>
+        <div class="row" style="gap:10px">
+          ${intro ? `<span class="card-note">v${esc(String(intro.version))} · ${esc(fmtFull(intro.updated_at))}</span>` : ""}
+          <a class="card-note" href="#/admin/content">编辑</a>
+        </div>
+      </div>
+      ${
+        intro
+          ? `<p class="small muted" style="white-space:pre-wrap;margin:0 0 10px;max-width:78ch">${esc(intro.body)}</p>
+             <p class="tiny dim" style="margin:0">这段文字同时用于前台首页标题下方那句导语（取第一段）。</p>`
+          : `<p class="small dim" style="margin:0">尚未填写。到「内容 → 活动介绍」写一段，前台首页与这里会一起更新。</p>`
+      }
+    </div>
+
     <div class="grid grid-4 block">
       <div class="stat"><div class="stat-label">队伍</div><div class="stat-value">${d.teams.length}</div></div>
       <div class="stat"><div class="stat-label">作品</div><div class="stat-value">${d.subs.filter((s) => s.status !== "draft").length}</div></div>
@@ -403,7 +425,31 @@ function appealsTab(appeals) {
 
 function contentTab(docs) {
   const rules = (docs || []).find((d) => d.doc_key === "rules");
+  const intro = (docs || []).find((d) => d.doc_key === "intro");
   return `
+    <div class="card block">
+      <div class="card-head"><h2>活动介绍</h2>
+        <span class="card-note">${intro ? "更新于 " + esc(fmtFull(intro.updated_at)) : "未初始化"}</span>
+      </div>
+      <p class="small muted" style="margin-bottom:16px">
+        这段文字用在两处：前台首页标题下方的导语（自动取<b>第一段</b>），以及后台概览的「活动介绍」卡片（显示全文）。
+        支持与规则页相同的 Markdown 语法。
+      </p>
+      <div class="field">
+        <label>标题</label>
+        <input type="text" id="intro-title" value="${esc(intro?.title || "活动介绍")}" />
+      </div>
+      <div class="field">
+        <label>正文</label>
+        <textarea id="intro-body" style="min-height:200px">${esc(intro?.body || "")}</textarea>
+        <div class="hint">第一段会被截成首页那一句导语，建议写 60–90 字能独立成句的话。</div>
+      </div>
+      <div class="row row-wrap" style="gap:10px">
+        <button class="btn btn-primary" id="btn-save-intro">保存并立即生效</button>
+        <a class="btn btn-ghost" href="#/home" target="_blank" rel="noopener">预览首页</a>
+      </div>
+    </div>
+
     <div class="card block">
       <div class="card-head"><h2>活动规则</h2>
         <span class="card-note">${rules ? "更新于 " + esc(fmtFull(rules.updated_at)) : "未初始化"}</span>
@@ -538,6 +584,155 @@ function openPartnerForm(el, existing) {
             m.close();
             toast(existing ? "已保存" : "已添加", "ok");
             adminView(el, "#/admin/partners");
+          } catch (e) {
+            toast(errMsg(e), "err");
+            busy(btn, false);
+          }
+        };
+      },
+    }
+  );
+}
+
+/* ------------------------------ 评委团队 ------------------------------ */
+
+function judgesTab(judges, sigs) {
+  const rows = (judges || []).slice().sort((a, b) => (a.sort || 100) - (b.sort || 100));
+  const signed = (sigs || []).filter((x) => x.doc_key === "judge");
+  return `
+    <div class="card block">
+      <div class="card-head"><h2>评委团队</h2><span class="card-note">前台 #/judges</span></div>
+      <p class="small muted" style="margin-bottom:14px">
+        这里录入的是<b>公开展示</b>的评委资料。它和「系统 → 角色管理」里的评委权限是两件事：
+        前者决定前台名单长什么样，后者决定账号能不能打分。
+      </p>
+      <div class="row row-wrap" style="gap:10px">
+        <button class="btn btn-primary" id="btn-add-judge">+ 添加评委</button>
+        <a class="btn btn-ghost" href="#/judges" target="_blank" rel="noopener">预览前台</a>
+      </div>
+    </div>
+
+    <div class="card block">
+      <div class="card-head"><h2>已录入</h2><span class="card-note">${rows.length} 位</span></div>
+      ${
+        rows.length
+          ? rows
+              .map(
+                (j) => `
+        <div class="org-admin-row">
+          <span class="org-logo sm">${
+            j.avatar_url ? `<img src="${esc(j.avatar_url)}" alt="" />` : `<b>${esc(monogram(j.name).slice(0, 1))}</b>`
+          }</span>
+          <div style="min-width:0;flex:1">
+            <div class="strong" style="font-size:13.5px">
+              ${esc(j.name)}
+              ${j.published ? "" : '<span class="tag" style="margin-left:6px">未公开</span>'}
+            </div>
+            <div class="tiny dim">${esc([j.title, j.org].filter(Boolean).join(" · ") || "—")}${
+                  j.tracks ? " · 赛道 " + esc(j.tracks) : ""
+                }</div>
+          </div>
+          <span class="mono tiny dim">${esc(String(j.sort ?? 100))}</span>
+          <button class="btn btn-sm" data-edit-judge="${j.id}">编辑</button>
+          <button class="btn btn-sm btn-ghost" data-del-judge="${j.id}">删除</button>
+        </div>`
+              )
+              .join("")
+          : `<div class="empty" style="padding:26px">还没有录入评委，点上方「+ 添加评委」</div>`
+      }
+    </div>
+
+    <div class="card">
+      <div class="card-head"><h2>评委公约签署</h2><span class="card-note">${signed.length} 位已签</span></div>
+      ${
+        signed.length
+          ? `<div class="tbl-wrap"><table class="tbl">
+              <thead><tr><th>署名</th><th>版本</th><th>签署时间</th></tr></thead>
+              <tbody>${signed
+                .map(
+                  (x) => `<tr>
+                    <td class="strong">${esc(x.agreed_name || "—")}</td>
+                    <td class="mono tiny">${esc(x.doc_version)}</td>
+                    <td class="mono tiny dim">${esc(fmtFull(x.created_at))}</td>
+                  </tr>`
+                )
+                .join("")}</tbody></table></div>`
+          : `<p class="small dim" style="margin:0">还没有评委签署公约。未签署的账号在「评审」页会被拦下，无法打分。</p>`
+      }
+    </div>`;
+}
+
+function openJudgeForm(el, existing) {
+  const j = existing || {};
+  const picked = String(j.tracks || "").toUpperCase();
+  const m = modal(
+    `<h3>${existing ? "编辑评委" : "添加评委"}</h3>
+     <div class="grid grid-2" style="margin-top:14px">
+       <div class="field"><label class="req">姓名</label>
+         <input id="jf-name" value="${esc(j.name || "")}" maxlength="20" placeholder="如：李维" /></div>
+       <div class="field"><label>职称 / 头衔</label>
+         <input id="jf-title" value="${esc(j.title || "")}" maxlength="30" placeholder="如：模组作者" /></div>
+     </div>
+     <div class="grid grid-2">
+       <div class="field"><label>所属机构</label>
+         <input id="jf-org" value="${esc(j.org || "")}" maxlength="40" placeholder="如：某社区 / 独立开发者" /></div>
+       <div class="field"><label>头像地址</label>
+         <input id="jf-ava" value="${esc(j.avatar_url || "")}" placeholder="https://…（留空用姓氏字标）" /></div>
+     </div>
+     <div class="field"><label>负责赛道</label>
+       <div class="row row-wrap" style="gap:14px">
+         ${TRACKS.map(
+           (t) => `<label class="row" style="gap:6px;cursor:pointer">
+             <input type="checkbox" class="jf-track" value="${t.code}" ${picked.includes(t.code) ? "checked" : ""} />
+             <span class="small">${t.code} · ${esc(t.name)}</span>
+           </label>`
+         ).join("")}
+       </div>
+       <div class="hint">不选表示全赛道</div>
+     </div>
+     <div class="field"><label>简介</label>
+       <textarea id="jf-bio" maxlength="200" placeholder="一句话介绍评审背景，会显示在公开页">${esc(j.bio || "")}</textarea></div>
+     <div class="grid grid-2">
+       <div class="field"><label>排序</label>
+         <input id="jf-sort" type="number" value="${esc(String(j.sort ?? 100))}" />
+         <div class="hint">数字小的排前面</div></div>
+       <div class="field"><label>公开</label>
+         <label class="row" style="gap:8px;cursor:pointer;margin-top:8px">
+           <input type="checkbox" id="jf-pub" ${j.published === false ? "" : "checked"} />
+           <span class="small">在前台评委团展示</span>
+         </label></div>
+     </div>
+     <div class="row" style="justify-content:flex-end;gap:9px;margin-top:16px">
+       <button class="btn btn-ghost" data-x="cancel">取消</button>
+       <button class="btn btn-primary" data-x="save">${existing ? "保存" : "添加"}</button>
+     </div>`,
+    {
+      onMount(host) {
+        const btn = host.querySelector('[data-x="save"]');
+        host.querySelector('[data-x="cancel"]').onclick = () => m.close();
+        btn.onclick = async () => {
+          const name = host.querySelector("#jf-name").value.trim();
+          if (!name) return toast("请填写评委姓名", "err");
+          const tracks = [...host.querySelectorAll(".jf-track")]
+            .filter((c) => c.checked)
+            .map((c) => c.value)
+            .join(",");
+          busy(btn, true, "保存中…");
+          try {
+            await saveJudge({
+              id: j.id,
+              name,
+              title: host.querySelector("#jf-title").value,
+              org: host.querySelector("#jf-org").value,
+              avatarUrl: host.querySelector("#jf-ava").value,
+              bio: host.querySelector("#jf-bio").value,
+              tracks,
+              sort: host.querySelector("#jf-sort").value,
+              published: host.querySelector("#jf-pub").checked,
+            });
+            m.close();
+            toast(existing ? "已保存" : "已添加", "ok");
+            adminView(el, "#/admin/judges");
           } catch (e) {
             toast(errMsg(e), "err");
             busy(btn, false);
@@ -877,6 +1072,26 @@ function wireAdmin(el, ctx) {
     };
   }
 
+  const saveIntro = el.querySelector("#btn-save-intro");
+  if (saveIntro) {
+    saveIntro.onclick = async (e) => {
+      const title = val(el, "#intro-title");
+      const body = el.querySelector("#intro-body").value;
+      if (!title) return toast("标题不能为空", "err");
+      if (!body.trim()) return toast("正文不能为空", "err");
+      busy(e.currentTarget, true, "保存中…");
+      try {
+        const { saveDocument } = await import("./api.js");
+        await saveDocument("intro", { title, body });
+        toast("已保存，前台已生效", "ok");
+        adminView(el, "#/admin/content");
+      } catch (err) {
+        toast(errMsg(err), "err");
+        busy(e.currentTarget, false);
+      }
+    };
+  }
+
   const saveAct = el.querySelector("#btn-save-act");
   if (saveAct) {
     saveAct.onclick = async (e) => {
@@ -915,6 +1130,30 @@ function wireAdmin(el, ctx) {
     b.onclick = () => {
       const p = (ctx.partners || []).find((x) => x.id === Number(b.dataset.editPartner));
       if (p) openPartnerForm(el, p);
+    };
+  });
+
+  const addJudge = el.querySelector("#btn-add-judge");
+  if (addJudge) addJudge.onclick = () => openJudgeForm(el, null);
+
+  el.querySelectorAll("[data-edit-judge]").forEach((b) => {
+    b.onclick = () => {
+      const j = (ctx.judgeList || []).find((x) => x.id === Number(b.dataset.editJudge));
+      if (j) openJudgeForm(el, j);
+    };
+  });
+
+  el.querySelectorAll("[data-del-judge]").forEach((b) => {
+    b.onclick = async () => {
+      const j = (ctx.judgeList || []).find((x) => x.id === Number(b.dataset.delJudge));
+      if (!(await confirmBox("删除评委", `将从公开名单移除「${esc(j?.name || "")}」。账号的评委权限不受影响。`, "删除"))) return;
+      try {
+        await deleteJudge(Number(b.dataset.delJudge));
+        toast("已删除", "ok");
+        adminView(el, "#/admin/judges");
+      } catch (e) {
+        toast(errMsg(e), "err");
+      }
     };
   });
 
