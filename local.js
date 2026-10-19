@@ -34,6 +34,7 @@ const DEFAULT_SETTINGS = {
   geetest: { enabled: false, captchaId: "", captchaKey: "" },
   virustotal: { enabled: false, apiKey: "" },
   cnkd: { enabled: false, clientId: "", clientSecret: "", redirectUri: "" },
+  github: { enabled: false, clientId: "", clientSecret: "", redirectUri: "" },
   // 捐助渠道：首页展示入口；afdian* 用于从爱发电开放平台拉取赞助记录
   donate: { enabled: false, url: "", title: "", note: "", afdianUserId: "", afdianToken: "" },
 };
@@ -651,24 +652,26 @@ function otpMailText(code, minutes) {
   ].join("\n");
 }
 
-async function sendOtp(req, res) {
-  if (!getSettings().smtp.enabled) {
-    return sendJson(res, 400, { error: { message: "管理员尚未开启邮箱验证码登录" } });
-  }
-  const body = await readJson(req);
-  const email = String(body.email || "").trim().toLowerCase();
-  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-    return sendJson(res, 400, { error: { message: "邮箱格式不正确" } });
-  }
-  const ip = (req.headers["x-forwarded-for"] || "").split(",")[0].trim() || req.socket.remoteAddress || "?";
-  if (!otpAllowed(`${ip}:${email}`)) {
-    return sendJson(res, 429, { error: { message: "发送过于频繁，请 1 分钟后再试" } });
-  }
+function resetMailText(code, minutes) {
+  return [
+    "你好，",
+    "",
+    `你正在重置「像素松」参赛平台的登录密码，验证码：${code}`,
+    `${minutes} 分钟内有效。如果不是你本人操作，请忽略这封邮件。`,
+    "",
+    "—— 像素松",
+  ].join("\n");
+}
 
+const pwdOk = (p) => p.length >= 8 && /[A-Za-z]/.test(p) && /\d/.test(p);
+
+/** 生成并落库一条验证码；purpose 区分登录与重置，避免互相串用 */
+function issueOtp(email, purpose) {
   const code = String(crypto.randomInt(100000, 1000000));
   const rec = {
     id: crypto.randomBytes(12).toString("hex"),
     email,
+    purpose,
     hash: crypto.createHash("sha256").update(`${code}:${email}:${SECRET}`).digest("hex"),
     exp: new Date(Date.now() + 10 * 60000).toISOString(),
     tries: 0,
@@ -678,7 +681,46 @@ async function sendOtp(req, res) {
   db.otp = (db.otp || []).filter((o) => new Date(o.exp).getTime() > Date.now()).slice(-200);
   db.otp.push(rec);
   save(true);
+  return { rec, code };
+}
 
+/** 校验验证码；老记录没有 purpose，按登录处理 */
+function checkOtp(email, id, code, purpose) {
+  const rec = (db.otp || []).find(
+    (o) => o.id === id && o.email === email && (o.purpose || "login") === purpose
+  );
+  if (!rec || rec.used) return { ok: false, message: "验证码已失效，请重新获取" };
+  if (new Date(rec.exp).getTime() < Date.now()) {
+    return { ok: false, message: "验证码已过期，请重新获取" };
+  }
+  if (rec.tries >= 5) return { ok: false, message: "尝试次数过多，请重新获取", code: 429 };
+  rec.tries += 1;
+  const expect = crypto.createHash("sha256").update(`${code}:${email}:${SECRET}`).digest("hex");
+  if (!safeEqual(expect, rec.hash)) {
+    save(true);
+    return { ok: false, message: "验证码错误" };
+  }
+  rec.used = true;
+  save(true);
+  return { ok: true, rec };
+}
+
+const emailOk = (email) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+const clientIp = (req) =>
+  (req.headers["x-forwarded-for"] || "").split(",")[0].trim() || req.socket.remoteAddress || "?";
+
+async function sendOtp(req, res) {
+  if (!getSettings().smtp.enabled) {
+    return sendJson(res, 400, { error: { message: "管理员尚未开启邮箱验证码登录" } });
+  }
+  const body = await readJson(req);
+  const email = String(body.email || "").trim().toLowerCase();
+  if (!emailOk(email)) return sendJson(res, 400, { error: { message: "邮箱格式不正确" } });
+  if (!otpAllowed(`${clientIp(req)}:${email}`)) {
+    return sendJson(res, 429, { error: { message: "发送过于频繁，请 1 分钟后再试" } });
+  }
+
+  const { rec, code } = issueOtp(email, "login");
   const s = getSettings().smtp;
   try {
     await sendMail(s, {
@@ -692,8 +734,72 @@ async function sendOtp(req, res) {
     return sendJson(res, 502, { error: { message: `邮件发送失败：${e.message}` } });
   }
 
-  const exists = rows("users").some((u) => u.email === email);
-  return sendJson(res, 200, { data: { verificationId: rec.id, isExistingUser: exists } });
+  const user = rows("users").find((u) => u.email === email);
+  return sendJson(res, 200, {
+    data: {
+      verificationId: rec.id,
+      isExistingUser: Boolean(user),
+      hasPassword: Boolean(user && user.password_hash),
+    },
+  });
+}
+
+async function sendReset(req, res) {
+  if (!getSettings().smtp.enabled) {
+    return sendJson(res, 400, { error: { message: "管理员尚未开启邮件服务，无法重置密码" } });
+  }
+  const body = await readJson(req);
+  const email = String(body.email || "").trim().toLowerCase();
+  if (!emailOk(email)) return sendJson(res, 400, { error: { message: "邮箱格式不正确" } });
+  const user = rows("users").find((u) => u.email === email);
+  if (!user) return sendJson(res, 404, { error: { message: "该邮箱尚未注册" } });
+  if (!otpAllowed(`${clientIp(req)}:${email}`)) {
+    return sendJson(res, 429, { error: { message: "发送过于频繁，请 1 分钟后再试" } });
+  }
+
+  const { rec, code } = issueOtp(email, "reset");
+  const s = getSettings().smtp;
+  try {
+    await sendMail(s, {
+      to: email,
+      subject: "像素松 · 重置密码",
+      text: resetMailText(code, 10),
+    });
+  } catch (e) {
+    db.otp = db.otp.filter((o) => o.id !== rec.id);
+    save(true);
+    return sendJson(res, 502, { error: { message: `邮件发送失败：${e.message}` } });
+  }
+  return sendJson(res, 200, { data: { verificationId: rec.id, email } });
+}
+
+async function confirmReset(req, res) {
+  const body = await readJson(req);
+  const email = String(body.email || "").trim().toLowerCase();
+  const verificationId = String(body.verificationId || "");
+  const code = String(body.code || "").trim();
+  const password = String(body.password || "");
+
+  if (!emailOk(email)) return sendJson(res, 400, { error: { message: "邮箱格式不正确" } });
+  if (!pwdOk(password)) {
+    return sendJson(res, 400, { error: { message: "密码至少 8 位，且同时包含字母和数字" } });
+  }
+  const user = rows("users").find((u) => u.email === email);
+  if (!user) return sendJson(res, 404, { error: { message: "该邮箱尚未注册" } });
+
+  const checked = checkOtp(email, verificationId, code, "reset");
+  if (!checked.ok) {
+    return sendJson(res, checked.code || 400, { error: { message: checked.message } });
+  }
+
+  user.salt = crypto.randomBytes(16).toString("hex");
+  user.password_hash = scrypt(password, user.salt);
+  createSession(res, user.uid, req);
+  save(true);
+  const profile = rows("profiles").find((p) => p.owner_id === user.uid) || {};
+  return sendJson(res, 200, {
+    data: { user: { id: user.uid, email }, role: profile.role || "participant" },
+  });
 }
 
 async function verifyOtp(req, res) {
@@ -701,30 +807,169 @@ async function verifyOtp(req, res) {
   const email = String(body.email || "").trim().toLowerCase();
   const id = String(body.verificationId || "");
   const code = String(body.code || "").trim();
+  const password = String(body.password || "");
   const name = Array.from(String(body.name || "").trim()).slice(0, 20).join("");
+  const user = rows("users").find((u) => u.email === email);
+  const hasPassword = Boolean(user && user.password_hash);
+
   // 新账号（验证码首次登录）同样必须填昵称
-  if (!rows("users").some((u) => u.email === email) && Array.from(name).length < 2) {
+  if (!user && Array.from(name).length < 2) {
     return sendJson(res, 400, { error: { message: "首次登录请先填写昵称" } });
   }
-  const rec = (db.otp || []).find((o) => o.id === id && o.email === email);
-  if (!rec || rec.used) return sendJson(res, 400, { error: { message: "验证码已失效，请重新获取" } });
-  if (new Date(rec.exp).getTime() < Date.now()) {
-    return sendJson(res, 400, { error: { message: "验证码已过期，请重新获取" } });
+  // 还没有密码的账号，验证码登录时必须一并设置，之后才能用密码登录
+  if (!hasPassword && !password) {
+    return sendJson(res, 400, { error: { message: "请设置登录密码" } });
   }
-  if (rec.tries >= 5) return sendJson(res, 429, { error: { message: "尝试次数过多，请重新获取" } });
-  rec.tries += 1;
-  const expect = crypto.createHash("sha256").update(`${code}:${email}:${SECRET}`).digest("hex");
-  if (!safeEqual(expect, rec.hash)) {
-    save(true);
-    return sendJson(res, 400, { error: { message: "验证码错误" } });
+  if (password && !pwdOk(password)) {
+    return sendJson(res, 400, { error: { message: "密码至少 8 位，且同时包含字母和数字" } });
   }
-  rec.used = true;
+
+  const checked = checkOtp(email, id, code, "login");
+  if (!checked.ok) {
+    return sendJson(res, checked.code || 400, { error: { message: checked.message } });
+  }
+
   const { uid, profile, created } = ensureUser(email, body.name);
+  if (password) {
+    const target = rows("users").find((u) => u.uid === uid);
+    target.salt = crypto.randomBytes(16).toString("hex");
+    target.password_hash = scrypt(password, target.salt);
+  }
   createSession(res, uid, req);
   save(true);
   return sendJson(res, 200, {
     data: { user: { id: uid, email }, role: profile.role || "participant", isNew: created },
   });
+}
+
+/* ---------------------- 第三方身份（CNKD / GitHub） ---------------------- */
+
+const PROVIDER_KEY = { cnkd: "cnkd_sub", github: "github_id" };
+const PROVIDER_NAME = { cnkd: "CNKD", github: "GitHub" };
+
+function findSocialProfile(provider, externalId) {
+  const key = PROVIDER_KEY[provider];
+  if (!key) return null;
+  return rows("profiles").find((p) => String(p[key] || "") === String(externalId));
+}
+
+/** 第三方账号首次进入时建号：没有邮箱也能用，昵称取平台昵称 */
+function createSocialUser({ provider, externalId, displayName, login, email }) {
+  const uid = `u${nextId("users")}`;
+  const user = {
+    id: nextId("users"),
+    uid,
+    email: email || null,
+    salt: "",
+    password_hash: "",
+    created_at: nowIso(),
+  };
+  rows("users").push(user);
+
+  const isFirst = rows("profiles").length === 0;
+  const base = Array.from(String(displayName || login || "新用户").trim()).slice(0, 20).join("");
+  const nickname = Array.from(base).length >= 2 ? base : `${base || "像素"}用户`;
+  const profile = {
+    id: nextId("profiles"),
+    owner_id: uid,
+    email: email || "",
+    nickname,
+    role: isFirst ? "admin" : "participant",
+    looking_for_team: false,
+    created_at: nowIso(),
+  };
+  profile[PROVIDER_KEY[provider]] = String(externalId);
+  if (provider === "github") profile.github_login = login || null;
+  rows("profiles").push(profile);
+  return { user, profile, uid };
+}
+
+/**
+ * 第三方登录 / 注册 / 绑定三合一：
+ * - 已登录：把该身份绑定到当前账号（bind=true 时必须是已登录）
+ * - 未登录且已有绑定：直接登录
+ * - 未登录且未绑定：创建新账号并登录
+ * 返回 { action: "bound" | "login" | "created", uid, nickname }
+ */
+function completeSocial(req, res, opts) {
+  const { provider, externalId, displayName, login, email, bind } = opts;
+  const key = PROVIDER_KEY[provider];
+  if (!key) throw new Error("不支持的登录方式");
+
+  const session = currentUser(req);
+  if (bind && !session) throw new Error("登录状态已失效，请重新登录后再绑定");
+
+  const bound = findSocialProfile(provider, externalId);
+
+  if (session) {
+    if (bound && bound.owner_id !== session.uid) {
+      throw new Error(`该 ${PROVIDER_NAME[provider]} 账号已绑定到其他账号`);
+    }
+    const profile = rows("profiles").find((p) => p.owner_id === session.uid);
+    if (!profile) throw new Error("账号资料不存在，请联系主办方");
+    profile[key] = String(externalId);
+    if (provider === "github") profile.github_login = login || null;
+    save(true);
+    return { action: "bound", uid: session.uid, nickname: profile.nickname };
+  }
+
+  if (bound) {
+    const user = rows("users").find((u) => u.uid === bound.owner_id);
+    if (user) {
+      createSession(res, user.uid, req);
+      save(true);
+      return { action: "login", uid: user.uid, nickname: bound.nickname };
+    }
+  }
+
+  // GitHub 返回已验证邮箱且该邮箱已有账号：直接关联，避免一个人两个号
+  if (provider === "github" && email) {
+    const byEmail = rows("users").find((u) => u.email === email);
+    const profile = byEmail && rows("profiles").find((p) => p.owner_id === byEmail.uid);
+    if (profile) {
+      if (profile.github_id && String(profile.github_id) !== String(externalId)) {
+        throw new Error("该邮箱账号已绑定其他 GitHub，请先在「我的」解绑");
+      }
+      profile.github_id = String(externalId);
+      profile.github_login = login || null;
+      if (!profile.email) profile.email = email;
+      createSession(res, byEmail.uid, req);
+      save(true);
+      return { action: "login", uid: byEmail.uid, nickname: profile.nickname };
+    }
+  }
+
+  const created = createSocialUser(opts);
+  createSession(res, created.uid, req);
+  save(true);
+  return { action: "created", uid: created.uid, nickname: created.profile.nickname };
+}
+
+/** 解绑第三方身份；必须保留至少一种可登录方式 */
+function unbindSocial(req, res, provider) {
+  const u = currentUser(req);
+  if (!u) return sendJson(res, 401, { error: { message: "请先登录" } });
+  const key = PROVIDER_KEY[provider];
+  if (!key) return sendJson(res, 400, { error: { message: "不支持的登录方式" } });
+
+  const profile = rows("profiles").find((p) => p.owner_id === u.uid);
+  const user = rows("users").find((x) => x.uid === u.uid);
+  if (!profile || !profile[key]) {
+    return sendJson(res, 400, { error: { message: `尚未绑定 ${PROVIDER_NAME[provider]}` } });
+  }
+
+  const hasPassword = Boolean(user && user.password_hash);
+  const otherKey = provider === "cnkd" ? "github_id" : "cnkd_sub";
+  if (!hasPassword && !profile[otherKey]) {
+    return sendJson(res, 400, {
+      error: { message: "这是当前账号唯一的登录方式，请先设置密码或绑定其他方式" },
+    });
+  }
+
+  profile[key] = null;
+  if (provider === "github") profile.github_login = null;
+  save(true);
+  return sendJson(res, 200, { data: { ok: true } });
 }
 
 /**
@@ -804,10 +1049,25 @@ async function handleAuth(req, res, url) {
   if (url.pathname.endsWith("/auth/otp/send") && req.method === "POST") return sendOtp(req, res);
   if (url.pathname.endsWith("/auth/otp/verify") && req.method === "POST") return verifyOtp(req, res);
   if (url.pathname.endsWith("/auth/register") && req.method === "POST") return handleRegister(req, res);
+  if (url.pathname.endsWith("/auth/reset/send") && req.method === "POST") return sendReset(req, res);
+  if (url.pathname.endsWith("/auth/reset/confirm") && req.method === "POST") return confirmReset(req, res);
 
   if (url.pathname.endsWith("/auth/session") && req.method === "GET") {
     const u = currentUser(req);
-    return sendJson(res, 200, { data: u ? { user: { id: u.uid, email: u.profile.email } } : null });
+    if (!u) return sendJson(res, 200, { data: null });
+    const user = rows("users").find((x) => x.uid === u.uid) || {};
+    return sendJson(res, 200, {
+      data: {
+        user: { id: u.uid, email: user.email || null },
+        security: {
+          hasPassword: Boolean(user.password_hash),
+          email: user.email || null,
+          cnkd: Boolean(u.profile.cnkd_sub),
+          github: Boolean(u.profile.github_id),
+          githubLogin: u.profile.github_login || null,
+        },
+      },
+    });
   }
 
   if (url.pathname.endsWith("/auth/login") && req.method === "POST") {
@@ -822,15 +1082,17 @@ async function handleAuth(req, res, url) {
 
     let user = rows("users").find((u) => u.email === email);
     let isNew = false;
-    if (user && !user.password_hash) {
-      // 先用验证码注册、尚未设密码：首次用密码登录即设置密码
-      user.salt = crypto.randomBytes(16).toString("hex");
-      user.password_hash = scrypt(password, user.salt);
-      save();
-    } else if (!user) {
+    if (!user) {
       // 注册必须走 /auth/register 并验证邮箱，这里不再顺手建号
       return sendJson(res, 400, { error: { message: "该邮箱尚未注册，请先注册" } });
-    } else if (!safeEqual(scrypt(password, user.salt), user.password_hash)) {
+    }
+    // 第三方账号可能只有邮箱、没有密码：绝不能靠「随便输一个密码」就把密码设上
+    if (!user.password_hash) {
+      return sendJson(res, 400, {
+        error: { message: "该账号尚未设置密码，请用验证码登录或先重置密码" },
+      });
+    }
+    if (!safeEqual(scrypt(password, user.salt), user.password_hash)) {
       return sendJson(res, 401, { error: { message: "邮箱或密码错误" } });
     }
 
@@ -844,6 +1106,11 @@ async function handleAuth(req, res, url) {
   if (url.pathname.endsWith("/auth/logout") && req.method === "POST") {
     clearSession(req, res);
     return sendJson(res, 200, { data: { ok: true } });
+  }
+
+  if (url.pathname.endsWith("/auth/unbind") && req.method === "POST") {
+    const body = await readJson(req);
+    return unbindSocial(req, res, String(body.provider || ""));
   }
 
   if (url.pathname.endsWith("/auth/password") && req.method === "POST") {
@@ -868,8 +1135,14 @@ async function handleAuth(req, res, url) {
     if (!u) return sendJson(res, 401, { error: { message: "请先登录" } });
     const body = await readJson(req);
     const next = String(body.password || "");
-    if (next.length < 6) return sendJson(res, 400, { error: { message: "密码至少 6 位" } });
+    if (!pwdOk(next)) {
+      return sendJson(res, 400, { error: { message: "密码至少 8 位，且同时包含字母和数字" } });
+    }
     const user = rows("users").find((x) => x.uid === u.uid);
+    // 已有密码的账号必须走「修改密码」（校验旧密码），这里只给第三方账号补设密码
+    if (user.password_hash) {
+      return sendJson(res, 400, { error: { message: "账号已有密码，请使用「修改密码」" } });
+    }
     user.salt = crypto.randomBytes(16).toString("hex");
     user.password_hash = scrypt(next, user.salt);
     save();
@@ -913,6 +1186,7 @@ function maskSettings() {
     geetest: { ...s.geetest, captchaKey: "", hasKey: Boolean(s.geetest.captchaKey) },
     virustotal: { ...s.virustotal, apiKey: "", hasKey: Boolean(s.virustotal.apiKey) },
     cnkd: { ...(s.cnkd || {}), clientSecret: "", hasSecret: Boolean(s.cnkd && s.cnkd.clientSecret) },
+    github: { ...(s.github || {}), clientSecret: "", hasSecret: Boolean(s.github && s.github.clientSecret) },
     donate: {
       enabled: Boolean(s.donate && s.donate.enabled),
       url: (s.donate && s.donate.url) || "",
@@ -952,7 +1226,7 @@ async function handleSettings(req, res, url, ctx) {
     const body = await readJson(req);
     const s = getSettings();
     const patch = body || {};
-    for (const key of ["smtp", "geetest", "virustotal", "cnkd", "donate"]) {
+    for (const key of ["smtp", "geetest", "virustotal", "cnkd", "github", "donate"]) {
       if (!patch[key] || typeof patch[key] !== "object") continue;
       const next = { ...s[key] };
       for (const [k, v] of Object.entries(patch[key])) {
@@ -1009,4 +1283,4 @@ async function handle(req, res, url) {
   }
 }
 
-module.exports = { init, handle, rows, getSettings, currentUser };
+module.exports = { init, handle, rows, getSettings, currentUser, completeSocial, unbindSocial };

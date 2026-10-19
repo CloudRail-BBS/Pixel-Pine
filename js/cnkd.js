@@ -15,19 +15,6 @@ export async function cnkdConfig() {
   return cfg;
 }
 
-export function startCnkdLogin() {
-  location.assign("/api/cnkd/start");
-}
-
-export async function fetchCnkdTicket(ticket) {
-  const r = await fetch("/api/cnkd/session?ticket=" + encodeURIComponent(ticket));
-  const j = await r.json().catch(() => ({}));
-  if (!r.ok || !j.ok) {
-    const map = {
-      ticket_invalid: "登录凭证无效或已被使用，请重新发起",
-      ticket_expired: "登录凭证已过期，请重新发起",
-    };
-    throw new Error(map[j.reason] || "无法读取 CNKD 身份");
-  }
-  return j.profile;
+export function startCnkdLogin(bind = false) {
+  location.assign("/api/cnkd/start" + (bind ? "?bind=1" : ""));
 }

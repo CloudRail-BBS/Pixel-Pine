@@ -1,6 +1,6 @@
 import {
   cloud, state, shell, bindShell, navigate, toast, esc, fmtDate, fmtFull, timeLeft, ago,
-  loadMe, loadActivity, requireLogin, busy, errMsg, db, unwrap, renderDoc, isStaff, sha256Hex,
+  loadMe, loadSession, loadActivity, requireLogin, busy, errMsg, db, unwrap, renderDoc, isStaff, sha256Hex,
 } from "./core.js";
 import {
   TRACKS, trackOf, DIMENSIONS, DEFAULT_ACTIVITY, PARTNER_ROLES, JUDGE_DOC, judgePlainText,
@@ -11,7 +11,7 @@ import {
   listJudgesPublic, getJudgeAck, signJudgeCode,
 } from "./api.js";
 import { verifyCaptcha } from "./geetest.js";
-import { cnkdConfig, startCnkdLogin, fetchCnkdTicket } from "./cnkd.js";
+import { cnkdConfig, startCnkdLogin } from "./cnkd.js";
 import { signedDownload } from "./upload.js";
 
 let pendingOtp = null;
@@ -487,8 +487,17 @@ function otpPane() {
       <input type="text" id="f-name-o" maxlength="20" placeholder="展示给其他参赛者的昵称" autocomplete="nickname" />
       <div class="hint">新账号需要填写昵称，会出现在队伍、作品与证书上。</div>
     </div>
+    <div class="field">
+      <label id="otp-pwd-label">登录密码</label>
+      <input type="password" id="f-pwd-o" placeholder="至少 8 位，含字母和数字" autocomplete="new-password" />
+      <div class="hint" id="otp-pwd-hint">首次使用该邮箱时必须设置；已有密码可留空</div>
+    </div>
+    <div class="field">
+      <label>确认密码</label>
+      <input type="password" id="f-pwd2-o" placeholder="再输一次（已有密码可留空）" autocomplete="new-password" />
+    </div>
     <button class="btn btn-primary btn-block" id="btn-otp" type="button">登录 / 注册</button>
-    <p class="tiny dim" style="margin-top:12px">新邮箱首次验证码登录会创建账号，需同时填写昵称。想改用密码登录，请先走「忘记密码」设置一次。</p>`;
+    <p class="tiny dim" style="margin-top:12px">新邮箱首次验证码登录会创建账号，需同时填写昵称并设置密码；已有账号可直接用验证码登录。</p>`;
 }
 
 function pwdPane() {
@@ -502,7 +511,7 @@ function pwdPane() {
       <input type="password" id="f-password" placeholder="输入密码" autocomplete="current-password" />
       ${
         LOCAL_MODE
-          ? `<div class="hint">密码至少 6 位。还没有账号请点下方「注册」。</div>`
+          ? `<div class="hint">密码至少 6 位 · <a href="#" id="link-forgot">忘记密码？</a></div>`
           : `<div class="hint"><a href="#" id="link-forgot">忘记密码，或首次设置密码</a></div>`
       }
     </div>
@@ -588,6 +597,13 @@ function resetPane() {
 
 export async function loginView(el) {
   const cfg = await loadAuthCfg();
+
+  // OAuth 失败会带 oauth_error 回到登录页
+  const oauthError = new URLSearchParams(location.hash.split("?")[1] || "").get("oauth_error");
+  if (oauthError) {
+    toast(oauthError, "err");
+    history.replaceState(null, "", "#/login");
+  }
   const allowOtp = !LOCAL_MODE || Boolean(cfg.otp);
   // 只在没有验证码入口时把 otp 降级为密码登录；register / reset 不能被覆盖
   if (!allowOtp && loginMode === "otp") loginMode = "pwd";
@@ -601,7 +617,8 @@ export async function loginView(el) {
   if (!noteHtml) noteHtml = `<p>${esc(DEFAULT_LOGIN_NOTE)}</p>`;
 
   const cnkdOn = !LOCAL_MODE || Boolean(cfg.cnkd && cfg.cnkd.enabled);
-  const showThirdParty = cnkdOn || !LOCAL_MODE;
+  const githubOn = Boolean(LOCAL_MODE && cfg.github && cfg.github.enabled);
+  const showThirdParty = cnkdOn || githubOn || !LOCAL_MODE;
 
   el.innerHTML = shell(`
     <div class="auth-wrap">
@@ -632,6 +649,7 @@ export async function loginView(el) {
                    <span style="flex:1;height:1px;background:var(--line)"></span>
                  </div>
                  ${cnkdOn ? `<button class="btn btn-block" id="btn-cnkd" type="button">CNKD 一证通行</button>` : ""}
+                 ${githubOn ? `<button class="btn btn-block" id="btn-github" type="button" style="margin-top:9px">GitHub 登录 / 注册</button>` : ""}
                  ${LOCAL_MODE ? "" : `<button class="btn btn-block" id="btn-wechat" type="button" style="margin-top:9px">微信扫码登录</button>`}`
               : ""
           }
@@ -682,7 +700,12 @@ async function sendCode(btn, email) {
     toast("验证码已发送，请查收邮箱", "ok");
     counting = true;
     startCooldown(btn);
-    return { email, verificationId: sent.data.verificationId, isExistingUser: sent.data.isExistingUser };
+    return {
+      email,
+      verificationId: sent.data.verificationId,
+      isExistingUser: sent.data.isExistingUser,
+      hasPassword: sent.data.hasPassword,
+    };
   } catch (e) {
     toast(errMsg(e, "验证码发送失败"), "err");
     return null;
@@ -759,6 +782,9 @@ function wireLogin(el) {
     const loginBtn = el.querySelector("#btn-otp");
     const nameWrap = el.querySelector("#otp-name-wrap");
     const nameEl = el.querySelector("#f-name-o");
+    const pwdEl = el.querySelector("#f-pwd-o");
+    const pwd2El = el.querySelector("#f-pwd2-o");
+    const pwdHint = el.querySelector("#otp-pwd-hint");
 
     sendBtn.onclick = async () => {
       const email = emailEl.value.trim();
@@ -768,12 +794,20 @@ function wireLogin(el) {
       // 先验证码后注册的场景：只有新账号才要求填昵称
       const isNew = pendingOtp.isExistingUser === false;
       if (nameWrap) nameWrap.style.display = isNew ? "" : "none";
+      if (pwdHint) {
+        pwdHint.textContent = pendingOtp.hasPassword
+          ? "该邮箱已设置密码，留空即可直接用验证码登录"
+          : "该邮箱尚未设置密码，必须填写后才能完成登录";
+      }
       if (isNew && nameEl) nameEl.focus();
+      else if (!pendingOtp.hasPassword && pwdEl) pwdEl.focus();
     };
 
     loginBtn.onclick = async () => {
       const email = emailEl.value.trim();
       const token = codeEl.value.trim();
+      const password = pwdEl ? pwdEl.value : "";
+      const password2 = pwd2El ? pwd2El.value : "";
       if (!pendingOtp || pendingOtp.email !== email) return toast("请先获取该邮箱的验证码", "err");
       if (!token) return toast("请输入验证码", "err");
       const isNew = pendingOtp.isExistingUser === false;
@@ -782,7 +816,18 @@ function wireLogin(el) {
         if (nameEl) nameEl.focus();
         return toast("首次登录请填写昵称，至少 2 个字", "err");
       }
-      busy(loginBtn, true, "登录中…");
+      // 新账号或尚未设置密码的账号，验证码登录必须同时设置密码
+      if (!pendingOtp.hasPassword && !password) {
+        if (pwdEl) pwdEl.focus();
+        return toast("请设置登录密码", "err");
+      }
+      if (password && !pwdOk(password)) {
+        return toast("密码至少 8 位，且需同时包含字母和数字", "err");
+      }
+      if (password && password !== password2) {
+        return toast("两次输入的密码不一致", "err");
+      }
+      busy(loginBtn, true, isNew ? "注册中…" : "登录中…");
       try {
         const done = await cloud.auth.verifyOtp({
           email,
@@ -790,6 +835,7 @@ function wireLogin(el) {
           isExistingUser: pendingOtp.isExistingUser,
           token,
           name,
+          password,
         });
         if (done.error) throw done.error;
         pendingOtp = null;
@@ -938,7 +984,7 @@ function wireLogin(el) {
           busy(sendBtn, true, "发送中…");
           const started = await cloud.auth.resetPasswordForEmail(email);
           if (started.error) throw started.error;
-          resetCtx = { email, handle: started.data };
+          resetCtx = { email, verificationId: started.data.verificationId };
           toast("验证码已发送", "ok");
           loginView(el);
         } catch (e) {
@@ -960,7 +1006,12 @@ function wireLogin(el) {
         if (p1 !== p2) return toast("两次输入的密码不一致", "err");
         busy(setBtn, true, "设置中…");
         try {
-          const done = await resetCtx.handle.updateUser({ nonce: code, password: p1 });
+          const done = await cloud.auth.confirmPasswordReset({
+            email: resetCtx.email,
+            verificationId: resetCtx.verificationId,
+            token: code,
+            password: p1,
+          });
           if (done.error) throw done.error;
           resetCtx = null;
           loginMode = "otp";
@@ -974,6 +1025,9 @@ function wireLogin(el) {
   }
 
   /* ---- 第三方 ---- */
+  const githubBtn = el.querySelector("#btn-github");
+  if (githubBtn) githubBtn.onclick = () => location.assign("/api/github/start");
+
   const cnkdBtn = el.querySelector("#btn-cnkd");
   if (cnkdBtn) {
     cnkdConfig().then((c) => {
@@ -1492,126 +1546,58 @@ export async function noticesView(el) {
 /* ---------------------------- CNKD 身份 ---------------------------- */
 
 export async function cnkdView(el, path) {
-  const qs = (path || "").split("?")[1] || "";
-  const q = new URLSearchParams(qs);
-  const ticket = q.get("ticket");
+  const q = new URLSearchParams((path || "").split("?")[1] || "");
   const err = q.get("error");
-  const clean = () => history.replaceState(null, "", "#/cnkd");
+  const c = await cnkdConfig();
+  if (state.session) await loadMe(true).catch(() => {});
+  else await loadSession().catch(() => {});
 
-  if (err) {
-    clean();
-    el.innerHTML = shell(`
-      <div class="auth-wrap">
-        <div class="card center">
-          <h2 style="margin-bottom:8px">CNKD 登录未完成</h2>
-          <p class="small muted">${esc(err)}</p>
-          <a class="btn btn-primary btn-block" href="#/login" style="margin-top:16px">返回登录</a>
-        </div>
-      </div>`);
-    bindShell();
-    return;
+  const signedIn = Boolean(state.session);
+  const bound = Boolean(state.me && state.me.cnkd_sub);
+  const name = state.me?.nickname || state.me?.owner_name || "";
+
+  let action = "";
+  if (!c.enabled) {
+    action = `<button class="btn btn-block" disabled>尚未配置 CNKD 客户端</button>
+              <p class="tiny dim" style="margin-top:10px">需要平台方发放 client_id 并登记回调地址。</p>`;
+  } else if (signedIn && bound) {
+    action = `<div class="row" style="gap:8px;align-items:center;margin-bottom:12px">
+                <span class="tag tag-teal">已绑定</span>
+                <span class="small muted">当前账号「${esc(name)}」已关联 CNKD</span>
+              </div>
+              <a class="btn btn-primary btn-block" href="#/me">回到我的</a>`;
+  } else if (signedIn) {
+    action = `<p class="small muted" style="margin-bottom:12px">把 CNKD 身份绑定到当前账号「${esc(name)}」，之后可以直接用它登录。</p>
+              <button class="btn btn-primary btn-block" id="btn-cnkd-bind">绑定到当前账号</button>`;
+  } else {
+    action = `<p class="small muted" style="margin-bottom:12px">首次使用会直接创建本站账号，无需先注册。</p>
+              <button class="btn btn-primary btn-block" id="btn-cnkd-login">用 CNKD 登录 / 注册</button>`;
   }
-
-  if (!ticket) {
-    const c = await cnkdConfig();
-    el.innerHTML = shell(`
-      <div class="auth-wrap">
-        <div class="card">
-          <h2 style="margin-bottom:10px">CNKD 一证通行</h2>
-          <p class="small muted">用 CNKD 账号完成一次身份核验，并把 <span class="mono tiny">${esc(c.scope || "profile.basic")}</span> 范围内的资料绑定到本站账号。</p>
-          <div class="divider"></div>
-          <p class="small muted" style="margin-bottom:14px">这不是替代登录：本站的报名、组队与作品数据由站内账号承载，CNKD 负责确认「你是 CNKD 生态里的哪个人」。</p>
-          ${c.enabled
-            ? `<button class="btn btn-primary btn-block" id="btn-cnkd-go">开始 CNKD 身份核验</button>`
-            : `<button class="btn btn-block" disabled>尚未配置客户端 ID</button>
-               <p class="tiny dim" style="margin-top:10px">需要平台方发放 client_id 并登记回调地址。</p>`}
-          <a class="btn btn-ghost btn-block" href="#/login" style="margin-top:9px">返回登录</a>
-        </div>
-      </div>`);
-    bindShell();
-    const go = el.querySelector("#btn-cnkd-go");
-    if (go) go.onclick = () => startCnkdLogin();
-    return;
-  }
-
-  let profile = null;
-  let error = "";
-  try {
-    profile = await fetchCnkdTicket(ticket);
-  } catch (e) {
-    error = e.message;
-  }
-  clean();
-
-  if (!profile) {
-    el.innerHTML = shell(`
-      <div class="auth-wrap">
-        <div class="card center">
-          <h2 style="margin-bottom:8px">身份核验失败</h2>
-          <p class="small muted">${esc(error || "未知错误")}</p>
-          <a class="btn btn-primary btn-block" href="#/cnkd" style="margin-top:16px">重新发起</a>
-        </div>
-      </div>`);
-    bindShell();
-    return;
-  }
-
-  await loadMe(true).catch(() => {});
-  const me = state.me;
-  const bound = me && me.cnkd_sub === profile.sub;
-  const initials = (profile.displayName || profile.username || "C").slice(0, 1).toUpperCase();
-  const avatar = profile.avatarUrl
-    ? `<img src="${esc(profile.avatarUrl)}" alt="" style="width:48px;height:48px;border-radius:50%;object-fit:cover;border:1px solid var(--line-strong)" />`
-    : `<div class="avatar" style="width:48px;height:48px;font-size:16px">${esc(initials)}</div>`;
 
   el.innerHTML = shell(`
     <div class="auth-wrap">
       <div class="card">
-        <div class="row" style="gap:13px;margin-bottom:16px">
-          ${avatar}
-          <div style="min-width:0">
-            <div class="strong" style="font-size:15px">${esc(profile.displayName || profile.username || "CNKD 用户")}</div>
-            <div class="tiny dim mono">${esc(profile.username || "")}</div>
-          </div>
-          <span class="tag tag-teal" style="margin-left:auto">已核验</span>
+        <div class="card-head" style="margin-bottom:10px">
+          <h2>CNKD 一证通行</h2>
+          <span class="tag ${bound ? "tag-teal" : ""}">${bound ? "已绑定" : signedIn ? "未绑定" : "未登录"}</span>
         </div>
-        <div class="tbl-wrap"><table class="tbl"><tbody>
-          <tr><td class="small muted" style="width:96px">唯一标识</td><td class="mono tiny" style="word-break:break-all">${esc(profile.sub)}</td></tr>
-          <tr><td class="small muted">账号状态</td><td class="small">${esc(profile.accountStatus || "—")}</td></tr>
-          <tr><td class="small muted">风控</td><td class="small">${esc(profile.riskLevel || "—")}</td></tr>
-        </tbody></table></div>
-        <div class="divider"></div>
+        <p class="small muted">用 CNKD 账号完成一次身份核验。本站的报名、组队与作品数据仍由站内账号承载，CNKD 负责确认「你是 CNKD 生态里的哪个人」。</p>
         ${
-          !me
-            ? `<p class="small muted" style="margin-bottom:12px">身份已确认，但还没有本站会话。请先用邮箱登录，再回到本页完成绑定。</p>
-               <a class="btn btn-primary btn-block" href="#/login">去登录</a>`
-            : bound
-            ? `<p class="small" style="color:var(--accent);margin-bottom:12px">已绑定到当前账号（${esc(me.nickname || me.owner_name || "我")}）。</p>
-               <a class="btn btn-block" href="#/me">回到我的</a>`
-            : `<p class="small muted" style="margin-bottom:12px">把该 CNKD 身份绑定到当前账号（${esc(me.nickname || me.owner_name || "我")}）？绑定后可用于身份识别与申诉核验。</p>
-               <button class="btn btn-primary btn-block" id="btn-bind">绑定到当前账号</button>`
+          err
+            ? `<div class="card" style="border-color:rgba(240,149,149,.35);margin-top:14px;padding:12px 14px">
+                 <p class="small" style="margin:0;color:var(--red)">${esc(err)}</p>
+               </div>`
+            : ""
         }
+        <div class="divider"></div>
+        ${action}
         <a class="btn btn-ghost btn-block" href="#/home" style="margin-top:9px">返回首页</a>
       </div>
     </div>`);
   bindShell();
 
-  const bindBtn = el.querySelector("#btn-bind");
-  if (bindBtn) {
-    bindBtn.onclick = async () => {
-      busy(bindBtn, true, "绑定中…");
-      try {
-        const rows = unwrap(
-          await db.from("profiles").update({ cnkd_sub: profile.sub }).eq("owner_id", me.owner_id).select()
-        );
-        if (!rows || !rows.length) throw new Error("绑定失败：没有权限修改该账号");
-        await loadMe(true);
-        toast("已绑定 CNKD 账号", "ok");
-        cnkdView(el, "/cnkd");
-      } catch (e) {
-        toast(e?.code === "23505" ? "该 CNKD 账号已绑定到其他本站账号" : errMsg(e), "err");
-        busy(bindBtn, false);
-      }
-    };
-  }
+  const loginBtn = el.querySelector("#btn-cnkd-login");
+  if (loginBtn) loginBtn.onclick = () => startCnkdLogin(false);
+  const bindBtn = el.querySelector("#btn-cnkd-bind");
+  if (bindBtn) bindBtn.onclick = () => startCnkdLogin(true);
 }

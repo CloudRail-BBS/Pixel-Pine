@@ -1,6 +1,6 @@
 import {
   cloud, state, shell, bindShell, navigate, toast, esc, fmtDate, fmtFull, timeLeft, ago,
-  loadMe, requireLogin, busy, errMsg, modal, confirmBox, db, unwrap, isAdmin, sha256Hex, renderDoc,
+  loadMe, loadSession, requireLogin, busy, errMsg, modal, confirmBox, db, unwrap, isAdmin, sha256Hex, renderDoc,
 } from "./core.js";
 import { TRACKS, trackOf, DIMENSIONS, PRESENT_RUBRIC, STATUS_TEXT, TEAM_STATUS, INTEGRITY_DOC, integrityPlainText } from "./config.js";
 import {
@@ -35,6 +35,32 @@ export async function meView(el) {
   try { appeals = await listMyAppeals(); } catch (_) {}
   const mySig = await getMySignature().catch(() => null);
   const myCerts = await listMyCertificates().catch(() => []);
+  const sec = state.session?.security || {};
+  let authCfg = null;
+  try {
+    authCfg = await fetch("/api/auth/config", { headers: { accept: "application/json" } }).then((r) => r.json());
+  } catch (_) {}
+  const cnkdOn = Boolean(authCfg && authCfg.cnkd && authCfg.cnkd.enabled);
+  const githubOn = Boolean(authCfg && authCfg.github && authCfg.github.enabled);
+
+  // OAuth 回来带的提示
+  const flags = new URLSearchParams(location.hash.split("?")[1] || "");
+  const welcome = flags.get("welcome");
+  const linked = flags.get("linked");
+  const loginFlag = flags.get("login");
+  const oauthError = flags.get("oauth_error");
+  if (welcome || linked || loginFlag || oauthError) {
+    if (welcome) {
+      toast(welcome === "cnkd" ? "已通过 CNKD 创建账号并登录" : "已通过 GitHub 创建账号并登录", "ok");
+    } else if (linked) {
+      toast(linked === "cnkd" ? "已绑定 CNKD 账号" : "已绑定 GitHub 账号", "ok");
+    } else if (loginFlag) {
+      toast("登录成功", "ok");
+    } else {
+      toast(oauthError, "err");
+    }
+    history.replaceState(null, "", "#/me");
+  }
 
   const roleText = me?.role === "admin" ? "主办方" : me?.role === "judge" ? "评委" : "参赛者";
 
@@ -113,8 +139,51 @@ export async function meView(el) {
         </div>
 
         <div class="card">
+          <div class="card-head"><h2>登录方式</h2><span class="card-note">可同时绑定多种</span></div>
+          <div class="bind-row">
+            <div class="bind-info"><b>邮箱</b><span class="tiny dim">${esc(sec.email || "未绑定")}</span></div>
+            <span class="tag ${sec.email ? "tag-teal" : ""}">${sec.email ? "已绑定" : "—"}</span>
+          </div>
+          <div class="bind-row">
+            <div class="bind-info"><b>密码</b><span class="tiny dim">${sec.hasPassword ? "可用于密码登录" : "未设置"}</span></div>
+            ${
+              sec.hasPassword
+                ? `<span class="tag tag-teal">已设置</span>`
+                : sec.email
+                ? `<button class="btn btn-sm" id="btn-set-pwd">设置密码</button>`
+                : `<span class="tag">—</span>`
+            }
+          </div>
+          <div class="bind-row">
+            <div class="bind-info"><b>CNKD 一证通行</b><span class="tiny dim">${
+              sec.cnkd ? "已绑定" : cnkdOn ? "未绑定" : "未配置"
+            }</span></div>
+            ${
+              sec.cnkd
+                ? `<button class="btn btn-sm btn-ghost" data-unbind="cnkd">解绑</button>`
+                : cnkdOn
+                ? `<button class="btn btn-sm" data-bind="cnkd">绑定</button>`
+                : `<span class="tiny dim">—</span>`
+            }
+          </div>
+          <div class="bind-row">
+            <div class="bind-info"><b>GitHub</b><span class="tiny dim">${
+              sec.github ? esc(sec.githubLogin || "已绑定") : githubOn ? "未绑定" : "未配置"
+            }</span></div>
+            ${
+              sec.github
+                ? `<button class="btn btn-sm btn-ghost" data-unbind="github">解绑</button>`
+                : githubOn
+                ? `<button class="btn btn-sm" data-bind="github">绑定</button>`
+                : `<span class="tiny dim">—</span>`
+            }
+          </div>
+          <p class="tiny dim" style="margin:12px 0 0">绑定后可用任一方式登录同一个账号。解绑前请确保还有其他可用的登录方式。</p>
+        </div>
+
+        <div class="card">
           <div class="card-head"><h2>账号安全</h2><span class="card-note">设置后可用密码登录</span></div>
-          <p class="small muted" style="margin-bottom:12px">修改密码需要验证当前密码。如果这是首次设置，请到登录页的「忘记密码，或首次设置密码」走邮件验证。</p>
+          <p class="small muted" style="margin-bottom:12px">修改密码需要验证当前密码；忘记密码请到登录页走「忘记密码」用邮箱验证码重置。</p>
           <div class="field"><label>当前密码</label>
             <input type="password" id="sec-old" placeholder="输入当前密码" autocomplete="current-password" /></div>
           <div class="field"><label>新密码</label>
@@ -127,6 +196,78 @@ export async function meView(el) {
     </div>
   `);
   bindShell();
+
+  el.querySelectorAll("[data-bind]").forEach((b) => {
+    b.onclick = () => {
+      const p = b.dataset.bind;
+      location.assign(p === "cnkd" ? "/api/cnkd/start?bind=1" : "/api/github/start?bind=1");
+    };
+  });
+
+  el.querySelectorAll("[data-unbind]").forEach((b) => {
+    b.onclick = async () => {
+      const p = b.dataset.unbind;
+      const label = p === "cnkd" ? "CNKD" : "GitHub";
+      if (!(await confirmBox(`解绑 ${label}`, `解绑后将不能用 ${label} 登录，确定吗？`, "解绑"))) return;
+      busy(b, true, "解绑中…");
+      try {
+        const res = await cloud.auth.unbind(p);
+        if (res.error) throw res.error;
+        await loadSession();
+        await loadMe(true);
+        toast(`已解绑 ${label}`, "ok");
+        meView(el);
+      } catch (e) {
+        toast(errMsg(e, "解绑失败"), "err");
+        busy(b, false);
+      }
+    };
+  });
+
+  const setPwdBtn = el.querySelector("#btn-set-pwd");
+  if (setPwdBtn) {
+    setPwdBtn.onclick = () => {
+      const m = modal(
+        `<h3>设置登录密码</h3>
+         <p class="small muted" style="margin-bottom:14px">设置后可以用邮箱 + 密码登录，也可以继续用验证码登录。</p>
+         <div class="field"><label class="req">新密码</label>
+           <input type="password" id="sp-pwd" placeholder="至少 8 位，含字母和数字" autocomplete="new-password" /></div>
+         <div class="field"><label class="req">确认密码</label>
+           <input type="password" id="sp-pwd2" placeholder="再输一次" autocomplete="new-password" /></div>
+         <div class="row" style="justify-content:flex-end;gap:9px;margin-top:16px">
+           <button class="btn btn-ghost" data-x="cancel">取消</button>
+           <button class="btn btn-primary" data-x="save">设置</button>
+         </div>`,
+        {
+          onMount(host) {
+            const btn = host.querySelector('[data-x="save"]');
+            host.querySelector('[data-x="cancel"]').onclick = () => m.close();
+            btn.onclick = async () => {
+              const p1 = host.querySelector("#sp-pwd").value;
+              const p2 = host.querySelector("#sp-pwd2").value;
+              if (p1.length < 8 || !/\d/.test(p1) || !/[A-Za-z]/.test(p1)) {
+                return toast("密码至少 8 位，且需同时包含字母和数字", "err");
+              }
+              if (p1 !== p2) return toast("两次输入的密码不一致", "err");
+              busy(btn, true, "设置中…");
+              try {
+                const res = await cloud.auth.updateUser({ password: p1 });
+                if (res.error) throw res.error;
+                m.close();
+                await loadSession();
+                await loadMe(true);
+                toast("密码已设置", "ok");
+                meView(el);
+              } catch (e) {
+                toast(errMsg(e, "设置失败"), "err");
+                busy(btn, false);
+              }
+            };
+          },
+        }
+      );
+    };
+  }
 
   const chgBtn = el.querySelector("#btn-change-pwd");
   if (chgBtn) {

@@ -167,16 +167,25 @@ export function createLocalCloud(config) {
       async sendOtp({ email }) {
         return post("/.cloud/local/auth/otp/send", { email });
       },
-      async verifyOtp({ email, verificationId, token, name }) {
-        return post("/.cloud/local/auth/otp/verify", { email, verificationId, code: token, name });
+      async verifyOtp({ email, verificationId, token, name, password }) {
+        return post("/.cloud/local/auth/otp/verify", { email, verificationId, code: token, name, password });
       },
 
       /** 注册：邮箱验证码 + 昵称 + 密码，一次成型 */
       async register({ email, password, name, code, verificationId }) {
         return post("/.cloud/local/auth/register", { email, password, name, code, verificationId });
       },
-      async resetPasswordForEmail() {
-        return unavailable("邮件重置密码");
+      /** 忘记密码：第一步发验证码 */
+      async resetPasswordForEmail(email) {
+        return post("/.cloud/local/auth/reset/send", { email });
+      },
+      /** 忘记密码：第二步校验验证码并设置新密码，成功后直接登录 */
+      async confirmPasswordReset({ email, verificationId, token, password }) {
+        return post("/.cloud/local/auth/reset/confirm", { email, verificationId, code: token, password });
+      },
+      /** 解绑第三方登录方式 */
+      async unbind(provider) {
+        return post("/.cloud/local/auth/unbind", { provider });
       },
       async signInWithOAuth() {
         return unavailable("第三方登录");

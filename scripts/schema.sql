@@ -15,9 +15,12 @@ CREATE TABLE IF NOT EXISTS profiles (
   looking_for_team BOOLEAN NOT NULL DEFAULT false,
   bio TEXT,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  cnkd_sub TEXT
+  cnkd_sub TEXT,
+  github_id TEXT,
+  github_login TEXT
 );
 CREATE UNIQUE INDEX IF NOT EXISTS profiles_cnkd_sub_key ON profiles (cnkd_sub) WHERE cnkd_sub IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS profiles_github_id_key ON profiles (github_id) WHERE github_id IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS teams (
   id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,

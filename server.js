@@ -32,7 +32,7 @@ const STARTED_AT = Date.now();
 const GEETEST_ID = process.env.GEETEST_CAPTCHA_ID || "";
 const GEETEST_KEY = process.env.GEETEST_CAPTCHA_KEY || "";
 
-const CNKD_BASE = "https://cloud.cnkd.fun";
+const CNKD_BASE = (process.env.CNKD_BASE || "https://cloud.cnkd.fun").replace(/\/+$/, "");
 const CNKD_API = CNKD_BASE + "/api-control";
 // 云模式从环境变量读；本地模式改由后台「设置 → CNKD 一证通行」维护
 const CNKD_ENV = {
@@ -42,11 +42,16 @@ const CNKD_ENV = {
 };
 const CNKD_SCOPE = "profile.basic profile.status";
 const CNKD_PENDING_TTL = 10 * 60 * 1000;
-const CNKD_TICKET_TTL = 5 * 60 * 1000;
 
 // 爱发电开放平台：user_id + token 只留在服务端，浏览器只拿到整理后的赞助者列表
 const AFDIAN_API = (process.env.AFDIAN_API || "https://afdian.com/api/open").replace(/\/+$/, "");
 const AFDIAN_TIMEOUT = 15000;
+
+// GitHub OAuth（本地模式读后台设置，云端模式读环境变量）
+const GITHUB_AUTHORIZE = process.env.GITHUB_AUTHORIZE || "https://github.com/login/oauth/authorize";
+const GITHUB_TOKEN_URL = process.env.GITHUB_TOKEN_URL || "https://github.com/login/oauth/access_token";
+const GITHUB_API = (process.env.GITHUB_API || "https://api.github.com").replace(/\/+$/, "");
+const GITHUB_PENDING_TTL = 10 * 60 * 1000;
 
 const VT_KEY = process.env.VT_API_KEY || "";
 
@@ -283,7 +288,6 @@ const DENY_FILES = new Set([
 /* ------------------------- CNKD 一证通行 ------------------------- */
 
 const cnkdPending = new Map();
-const cnkdTickets = new Map();
 
 const b64url = (buf) =>
   buf.toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
@@ -291,11 +295,17 @@ const b64url = (buf) =>
 function pruneCnkd() {
   const now = Date.now();
   for (const [k, v] of cnkdPending) if (now - v.at > CNKD_PENDING_TTL) cnkdPending.delete(k);
-  for (const [k, v] of cnkdTickets) if (now - v.at > CNKD_TICKET_TTL) cnkdTickets.delete(k);
 }
 
 function originOf(req) {
-  const proto = (req.headers["x-forwarded-proto"] || "https").split(",")[0].trim();
+  // 显式配置优先；否则信任反代的 x-forwarded-proto，再退回真实连接协议
+  if (process.env.PS_PUBLIC_ORIGIN) return process.env.PS_PUBLIC_ORIGIN.replace(/\/+$/, "");
+  const proto = (
+    req.headers["x-forwarded-proto"] ||
+    (req.socket.encrypted ? "https" : "http")
+  )
+    .split(",")[0]
+    .trim();
   const host = req.headers["x-forwarded-host"] || req.headers.host || "localhost";
   return `${proto}://${host}`;
 }
@@ -452,6 +462,88 @@ async function afdianSponsors() {
   } while (page <= totalPage);
 
   return out;
+}
+
+/* ------------------------- GitHub 登录 ------------------------- */
+
+const githubPending = new Map();
+
+function githubCfg() {
+  if (LOCAL_MODE) {
+    const g = local.getSettings().github || {};
+    const clientId = String(g.clientId || "").trim();
+    const clientSecret = String(g.clientSecret || "").trim();
+    return {
+      enabled: Boolean(g.enabled && clientId && clientSecret),
+      clientId,
+      clientSecret,
+      redirectUri: String(g.redirectUri || "").trim(),
+    };
+  }
+  return {
+    enabled: Boolean(process.env.GITHUB_CLIENT_ID && process.env.GITHUB_CLIENT_SECRET),
+    clientId: process.env.GITHUB_CLIENT_ID || "",
+    clientSecret: process.env.GITHUB_CLIENT_SECRET || "",
+    redirectUri: process.env.GITHUB_REDIRECT_URI || "",
+  };
+}
+
+function githubRedirectUri(req) {
+  return githubCfg().redirectUri || `${originOf(req)}/api/github/callback`;
+}
+
+function pruneGithub() {
+  const now = Date.now();
+  for (const [k, v] of githubPending) if (now - v.at > GITHUB_PENDING_TTL) githubPending.delete(k);
+}
+
+async function githubRequest(url, options) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 12000);
+  try {
+    const resp = await fetch(url, {
+      ...options,
+      headers: {
+        accept: "application/json",
+        "user-agent": "pixelsong",
+        ...((options && options.headers) || {}),
+      },
+      signal: controller.signal,
+    });
+    const json = await resp.json().catch(() => null);
+    return { status: resp.status, json };
+  } catch (e) {
+    throw new Error(e.name === "AbortError" ? "GitHub 接口超时" : "无法连接 GitHub：" + e.message);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function githubProfile(accessToken) {
+  const user = await githubRequest(`${GITHUB_API}/user`, {
+    headers: { authorization: `Bearer ${accessToken}`, accept: "application/vnd.github+json" },
+  });
+  if (!user.json || !user.json.id) throw new Error("读取 GitHub 资料失败");
+
+  let email = null;
+  try {
+    const list = await githubRequest(`${GITHUB_API}/user/emails`, {
+      headers: { authorization: `Bearer ${accessToken}`, accept: "application/vnd.github+json" },
+    });
+    if (Array.isArray(list.json)) {
+      const pick = list.json.find((e) => e.primary && e.verified) || list.json.find((e) => e.verified);
+      email = (pick && pick.email) || null;
+    }
+  } catch (_) {
+    // 用户未授予邮箱权限时忽略，退回账号本身
+  }
+
+  return {
+    id: String(user.json.id),
+    login: user.json.login || null,
+    name: user.json.name || user.json.login || null,
+    email,
+  };
 }
 
 /* ------------------------------- 静态文件 ------------------------------- */
@@ -758,6 +850,7 @@ const server = http.createServer({ maxHeaderSize: 64 * 1024 }, async (req, res) 
       otp: LOCAL_MODE ? smtpOn : true,
       captcha: { enabled: g.enabled, provider: "geetest", captchaId: g.id || null },
       cnkd: { enabled: c.enabled },
+      github: { enabled: githubCfg().enabled },
       donate: {
         enabled: donateOk,
         url: donateOk ? donateUrl : "",
@@ -813,11 +906,15 @@ const server = http.createServer({ maxHeaderSize: 64 * 1024 }, async (req, res) 
     if (!c.enabled) {
       return sendRedirect(res, "/#/cnkd?error=" + encodeURIComponent("CNKD 登录尚未配置客户端 ID"));
     }
+    const bind = url.searchParams.get("bind") === "1";
+    if (bind && !(LOCAL_MODE && local.currentUser(req))) {
+      return sendRedirect(res, "/#/login?oauth_error=" + encodeURIComponent("请先登录再绑定 CNKD"));
+    }
     pruneCnkd();
     const verifier = b64url(crypto.randomBytes(32));
     const challenge = b64url(crypto.createHash("sha256").update(verifier).digest());
     const state = crypto.randomBytes(16).toString("hex");
-    cnkdPending.set(state, { verifier, at: Date.now() });
+    cnkdPending.set(state, { verifier, at: Date.now(), bind });
     const target = new URL(CNKD_BASE + "/account/oauth/authorize");
     target.searchParams.set("response_type", "code");
     target.searchParams.set("client_id", c.clientId);
@@ -872,32 +969,113 @@ const server = http.createServer({ maxHeaderSize: 64 * 1024 }, async (req, res) 
     }
     const p = info.json && info.json.data;
     if (!p || !p.sub) return fail("未取得 CNKD 身份标识");
+    if (!LOCAL_MODE) return fail("当前部署不支持 CNKD 账号，请使用云端登录方式");
 
-    const ticket = crypto.randomBytes(24).toString("hex");
-    cnkdTickets.set(ticket, {
-      at: Date.now(),
-      profile: {
-        sub: p.sub,
-        username: p.username || null,
-        displayName: p.displayName || null,
-        avatarUrl: p.avatarUrl || null,
-        accountStatus: p.accountStatus || null,
-        riskLevel: p.riskLevel || null,
-      },
-    });
-    return sendRedirect(res, "/#/cnkd?ticket=" + ticket);
+    // 已登录 → 绑定；未登录且已绑定 → 登录；未登录且未绑定 → 直接建号并登录
+    let out;
+    try {
+      out = local.completeSocial(req, res, {
+        provider: "cnkd",
+        externalId: p.sub,
+        displayName: p.displayName || p.username || "CNKD 用户",
+        login: p.username || null,
+        email: null,
+        bind: rec.bind,
+      });
+    } catch (e) {
+      return fail(e.message || "CNKD 登录失败");
+    }
+
+    const flag =
+      out.action === "created" ? "welcome=cnkd" : out.action === "bound" ? "linked=cnkd" : "login=cnkd";
+    return sendRedirect(res, `/#/me?${flag}`);
   }
 
-  if (url.pathname === "/api/cnkd/session") {
-    const ticket = url.searchParams.get("ticket") || "";
-    const rec = cnkdTickets.get(ticket);
-    if (!rec) return sendJson(res, 404, { ok: false, reason: "ticket_invalid" });
-    if (Date.now() - rec.at > CNKD_TICKET_TTL) {
-      cnkdTickets.delete(ticket);
-      return sendJson(res, 410, { ok: false, reason: "ticket_expired" });
+  if (url.pathname === "/api/github/start") {
+    const g = githubCfg();
+    const failStart = (msg) => sendRedirect(res, "/#/login?oauth_error=" + encodeURIComponent(msg));
+    if (!g.enabled) return failStart("GitHub 登录尚未配置");
+    const bind = url.searchParams.get("bind") === "1";
+    if (bind && !(LOCAL_MODE && local.currentUser(req))) {
+      return failStart("请先登录再绑定 GitHub");
     }
-    cnkdTickets.delete(ticket);
-    return sendJson(res, 200, { ok: true, profile: rec.profile });
+    pruneGithub();
+    const state = crypto.randomBytes(16).toString("hex");
+    githubPending.set(state, { at: Date.now(), bind });
+    const target = new URL(GITHUB_AUTHORIZE);
+    target.searchParams.set("client_id", g.clientId);
+    target.searchParams.set("redirect_uri", githubRedirectUri(req));
+    target.searchParams.set("scope", "read:user user:email");
+    target.searchParams.set("state", state);
+    target.searchParams.set("allow_signup", "true");
+    return sendRedirect(res, target.toString());
+  }
+
+  if (url.pathname === "/api/github/callback") {
+    const fail = (msg) => sendRedirect(res, "/#/login?oauth_error=" + encodeURIComponent(msg));
+    const g = githubCfg();
+    if (!g.enabled) return fail("GitHub 登录尚未配置");
+    if (!LOCAL_MODE) return fail("当前部署不支持 GitHub 账号");
+    if (url.searchParams.get("error")) {
+      return fail(url.searchParams.get("error_description") || "GitHub 授权未完成");
+    }
+    const code = url.searchParams.get("code");
+    const state = url.searchParams.get("state");
+    if (!code || !state) return fail("回调缺少必要参数");
+    pruneGithub();
+    const rec = githubPending.get(state);
+    if (!rec) return fail("登录状态已失效，请重新发起");
+    githubPending.delete(state);
+    // 绑定失败时用户还停在「我的」，错误要带回同一页
+    const failAfter = (msg) =>
+      sendRedirect(
+        res,
+        (rec.bind ? "/#/me?oauth_error=" : "/#/login?oauth_error=") + encodeURIComponent(msg)
+      );
+
+    let tok;
+    try {
+      tok = await githubRequest(GITHUB_TOKEN_URL, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          client_id: g.clientId,
+          client_secret: g.clientSecret,
+          code,
+          redirect_uri: githubRedirectUri(req),
+        }),
+      });
+    } catch (e) {
+      return failAfter(e.message);
+    }
+    if (!tok.json || !tok.json.access_token) {
+      return failAfter((tok.json && (tok.json.error_description || tok.json.error)) || "换取 GitHub 令牌失败");
+    }
+
+    let gh;
+    try {
+      gh = await githubProfile(tok.json.access_token);
+    } catch (e) {
+      return failAfter(e.message);
+    }
+
+    let out;
+    try {
+      out = local.completeSocial(req, res, {
+        provider: "github",
+        externalId: gh.id,
+        displayName: gh.name,
+        login: gh.login,
+        email: gh.email,
+        bind: rec.bind,
+      });
+    } catch (e) {
+      return failAfter(e.message || "GitHub 登录失败");
+    }
+
+    const flag =
+      out.action === "created" ? "welcome=github" : out.action === "bound" ? "linked=github" : "login=github";
+    return sendRedirect(res, `/#/me?${flag}`);
   }
 
   if (url.pathname === "/api/donate/afdian/sponsors") {

@@ -1086,6 +1086,7 @@ function settingsTab(cfg, auth) {
   const gt = cfg.geetest || {};
   const vt = cfg.virustotal || {};
   const ck = cfg.cnkd || {};
+  const gh = cfg.github || {};
   const dn = cfg.donate || {};
   // 给极验控制台的填写示例，直接用当前访问地址生成，避免填错
   const siteOrigin = typeof location !== "undefined" ? location.origin : "https://你的域名";
@@ -1203,6 +1204,35 @@ function settingsTab(cfg, auth) {
         <div class="hint">需与 CNKD 平台登记值逐字一致。留空时按当前访问域名自动生成，换域名不必改配置。</div>
       </div>
       ${ck.hasSecret ? `<label class="row" style="gap:7px;cursor:pointer"><input type="checkbox" id="ck-clear" /><span class="small">清除已保存的 Secret</span></label>` : ""}
+    </div>
+
+    <div class="card block">
+      <div class="card-head">
+        <h2>GitHub 登录</h2>
+        <span class="card-note">${gh.enabled ? "已开启" : "未开启"}</span>
+      </div>
+      <p class="small muted" style="margin-bottom:16px">
+        在 GitHub「Settings → Developer settings → OAuth Apps」新建应用，回调地址填
+        <span class="mono tiny">${esc(location.origin)}/api/github/callback</span>。
+        开启后，登录页会多一个 GitHub 入口，首次授权会直接创建账号。
+      </p>
+      <label class="row" style="gap:9px;cursor:pointer;margin-bottom:16px">
+        <input type="checkbox" id="gh-enabled" ${gh.enabled ? "checked" : ""} />
+        <span class="small">开启 GitHub 登录 / 注册</span>
+      </label>
+      <div class="grid grid-2">
+        <div class="field"><label>Client ID</label>
+          <input id="gh-id" value="${esc(gh.clientId || "")}" placeholder="GitHub OAuth App 的 Client ID" /></div>
+        <div class="field"><label>Client Secret</label>
+          <input id="gh-secret" type="password" placeholder="${gh.hasSecret ? "已保存，留空不修改" : "GitHub OAuth App 的 Client Secret"}" autocomplete="new-password" />
+          ${secretHint(gh.hasSecret, "只保存在服务器，用于换取访问令牌")}
+        </div>
+      </div>
+      <div class="field"><label>回调地址</label>
+        <input id="gh-redirect" value="${esc(gh.redirectUri || "")}" placeholder="${esc(location.origin)}/api/github/callback" />
+        <div class="hint">需与 GitHub 应用里填写的 Authorization callback URL 逐字一致；留空按当前域名生成。</div>
+      </div>
+      ${gh.hasSecret ? `<label class="row" style="gap:7px;cursor:pointer"><input type="checkbox" id="gh-clear" /><span class="small">清除已保存的 Secret</span></label>` : ""}
     </div>
 
     <div class="card block">
@@ -1626,6 +1656,11 @@ function wireAdmin(el, ctx) {
           clientId: val(el, "#ck-id"),
           redirectUri: val(el, "#ck-redirect"),
         },
+        github: {
+          enabled: checked(el, "#gh-enabled"),
+          clientId: val(el, "#gh-id"),
+          redirectUri: val(el, "#gh-redirect"),
+        },
         donate: {
           enabled: checked(el, "#dn-enabled"),
           url: val(el, "#dn-url"),
@@ -1652,6 +1687,9 @@ function wireAdmin(el, ctx) {
       const cks = val(el, "#ck-secret");
       if (el.querySelector("#ck-clear")?.checked) patch.cnkd.clientSecret = "__clear__";
       else if (cks) patch.cnkd.clientSecret = cks;
+      const ghs = val(el, "#gh-secret");
+      if (el.querySelector("#gh-clear")?.checked) patch.github.clientSecret = "__clear__";
+      else if (ghs) patch.github.clientSecret = ghs;
 
       busy(saveSettings, true, "保存中…");
       try {
