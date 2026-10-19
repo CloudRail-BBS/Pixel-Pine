@@ -854,6 +854,9 @@ function settingsTab(cfg, auth) {
   const gt = cfg.geetest || {};
   const vt = cfg.virustotal || {};
   const ck = cfg.cnkd || {};
+  // 给极验控制台的填写示例，直接用当前访问地址生成，避免填错
+  const siteOrigin = typeof location !== "undefined" ? location.origin : "https://你的域名";
+  const siteHost = typeof location !== "undefined" ? location.hostname : "你的域名";
 
   return `
     <div class="card block">
@@ -933,6 +936,13 @@ function settingsTab(cfg, auth) {
         </div>
       </div>
       ${gt.hasKey ? `<label class="row" style="gap:7px;cursor:pointer"><input type="checkbox" id="gt-clear" /><span class="small">清除已保存的 Key</span></label>` : ""}
+      <div class="hint" style="margin-top:12px;line-height:1.9">
+        极验控制台里这样填：<br />
+        · 新增业务场景时，<b>客户端类型必须选 Web / Wap</b>，否则拿到的 ID 在网页上用不了<br />
+        · 「接入页面地址」填 <span class="mono">${esc(siteOrigin)}/#/login</span><br />
+        · 有「域名白名单」的话，填 <span class="mono">${esc(siteHost)}</span>（不带协议和端口）<br />
+        · 用 <span class="mono">IP:端口</span> 访问通常不被极验接受，建议先绑域名；只想先跑通可暂时关掉本项
+      </div>
     </div>
 
     <div class="card block">
