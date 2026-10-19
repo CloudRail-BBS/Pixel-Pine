@@ -9,7 +9,6 @@
  * 静态托管（没有 Node 服务端）时没有注入，退回线上域名，行为与之前一致。
  */
 const BOOT = (typeof window !== "undefined" && window.__PS_CONFIG__) || null;
-const FALLBACK_ENDPOINT = "https://pixelsong.app.workbuddy.host";
 
 const RUNTIME = {
   oauthRelayBaseUrl:
@@ -18,11 +17,8 @@ const RUNTIME = {
     (BOOT && BOOT.publishableKey) ||
     "wbpk_ASDGMaTrV7dAuvQijziP8z_1cmrp1ZytZS54tR74qrBdBG6NGJrS6c0",
 };
-if (BOOT) {
-  if (BOOT.endpoint) RUNTIME.endpoint = BOOT.endpoint;
-} else {
-  RUNTIME.endpoint = FALLBACK_ENDPOINT;
-}
+if (BOOT && BOOT.endpoint) RUNTIME.endpoint = BOOT.endpoint;
+// 没有注入时交给 SDK 回落到 location.origin，不再指向任何外部域名
 
 export const PUBLIC_CONFIG = RUNTIME;
 

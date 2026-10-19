@@ -4,7 +4,7 @@
   "private": true,
   "description": "像素松参赛平台",
   "scripts": {
-    "start": "node server.js",
+    "start": "node scripts/dev.js",
     "preflight": "node scripts/preflight.js",
     "check": "node scripts/preflight.js",
     "smoke": "node scripts/smoke.js"
