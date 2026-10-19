@@ -181,6 +181,21 @@ CREATE TABLE IF NOT EXISTS partners (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+-- 赞助者：公开鸣谢名单，手工录入或后续由爱发电同步
+CREATE TABLE IF NOT EXISTS sponsors (
+  id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  name TEXT NOT NULL,
+  amount NUMERIC(10, 2),
+  message TEXT,
+  avatar_url TEXT,
+  show_amount BOOLEAN NOT NULL DEFAULT false,
+  source TEXT NOT NULL DEFAULT 'manual',
+  external_id TEXT,
+  sort INT NOT NULL DEFAULT 100,
+  owner_id TEXT DEFAULT auth.uid(),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
 CREATE TABLE IF NOT EXISTS judges (
   id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
   name TEXT NOT NULL,
@@ -262,6 +277,9 @@ GRANT INSERT, UPDATE, DELETE ON public.certificates TO authenticated;
 GRANT SELECT ON public.partners TO anon, authenticated;
 GRANT INSERT, UPDATE, DELETE ON public.partners TO authenticated;
 
+GRANT SELECT ON public.sponsors TO anon, authenticated;
+GRANT INSERT, UPDATE, DELETE ON public.sponsors TO authenticated;
+
 GRANT SELECT ON public.judges TO anon, authenticated;
 GRANT INSERT, UPDATE, DELETE ON public.judges TO authenticated;
 
@@ -279,6 +297,7 @@ ALTER TABLE public.signatures          ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.documents           ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.certificates        ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.partners            ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.sponsors            ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.judges              ENABLE ROW LEVEL SECURITY;
 
 DROP POLICY IF EXISTS profiles_read ON public.profiles;
@@ -380,6 +399,12 @@ DROP POLICY IF EXISTS partners_read ON public.partners;
 DROP POLICY IF EXISTS partners_admin ON public.partners;
 CREATE POLICY partners_read  ON public.partners FOR SELECT TO anon, authenticated USING (true);
 CREATE POLICY partners_admin ON public.partners FOR ALL TO authenticated
+  USING (is_admin()) WITH CHECK (is_admin());
+
+DROP POLICY IF EXISTS sponsors_read ON public.sponsors;
+DROP POLICY IF EXISTS sponsors_admin ON public.sponsors;
+CREATE POLICY sponsors_read  ON public.sponsors FOR SELECT TO anon, authenticated USING (true);
+CREATE POLICY sponsors_admin ON public.sponsors FOR ALL TO authenticated
   USING (is_admin()) WITH CHECK (is_admin());
 
 DROP POLICY IF EXISTS judges_read ON public.judges;

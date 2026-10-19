@@ -566,6 +566,48 @@ export async function deletePartner(id) {
   invalidate("partners");
 }
 
+/* ---------------- 赞助者（鸣谢名单） ---------------- */
+
+export async function listSponsors() {
+  return cached("sponsors", 30000, async () => {
+    const rows =
+      unwrap(await db.from("sponsors").select("*").order("sort").order("created_at")) || [];
+    return rows;
+  });
+}
+
+export async function saveSponsor(s) {
+  const raw = String(s.amount ?? "").trim();
+  const amount = raw === "" ? null : Number(raw);
+  if (amount !== null && (!Number.isFinite(amount) || amount < 0)) {
+    throw new Error("金额需为不小于 0 的数字");
+  }
+  const payload = {
+    name: String(s.name || "").trim().slice(0, 40),
+    amount,
+    message: String(s.message || "").trim().slice(0, 120) || null,
+    avatar_url: String(s.avatarUrl || "").trim() || null,
+    show_amount: Boolean(s.showAmount),
+    sort: Number(s.sort) || 100,
+  };
+  if (!payload.name) throw new Error("请填写赞助者称呼");
+  if (s.id) {
+    const rows = unwrap(await db.from("sponsors").update(payload).eq("id", s.id).select());
+    if (!rows || !rows.length) throw new Error("保存失败：没有权限修改该记录");
+  } else {
+    payload.owner_id = sessionUid();
+    payload.source = "manual";
+    unwrap(await db.from("sponsors").insert(payload).select());
+  }
+  invalidate("sponsors");
+}
+
+export async function deleteSponsor(id) {
+  const rows = unwrap(await db.from("sponsors").delete().eq("id", id).select());
+  if (!rows || !rows.length) throw new Error("删除失败：没有权限");
+  invalidate("sponsors");
+}
+
 /* ---------------- 公开展示的作品 ---------------- */
 
 /** 只取已公示作品；登录者自己的草稿/未公示作品不会混进展厅 */

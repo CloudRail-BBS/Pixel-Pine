@@ -18,9 +18,9 @@ const { sendMail } = require("./mailer.js");
 const TABLES = [
   "profiles", "users", "sessions", "teams", "team_members", "submissions",
   "submission_versions", "reviews", "announcements", "activity", "appeals",
-  "signatures", "documents", "partners", "judges", "certificates",
+  "signatures", "documents", "partners", "sponsors", "judges", "certificates",
 ];
-const PUBLIC_READ = new Set(["activity", "documents", "partners", "announcements", "judges", "certificates"]);
+const PUBLIC_READ = new Set(["activity", "documents", "partners", "sponsors", "announcements", "judges", "certificates"]);
 // 未登录也能查，但只能看到 status='public' 的行
 const ANON_READ = new Set([...PUBLIC_READ, "submissions"]);
 const SESSION_TTL = 30 * 24 * 3600; // 秒

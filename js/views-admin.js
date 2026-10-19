@@ -10,6 +10,7 @@ import {
   setUserRole, listVersions, listDocuments, saveDocument,
   listCertificates, issueCertificates, revokeCertificate, issueJudgeCertificate,
   listPartners, savePartner, deletePartner,
+  listSponsors, saveSponsor, deleteSponsor,
   listJudgesAll, saveJudge, deleteJudge, getIntro, plainFirst,
   getSiteSettings, saveSiteSettings, sendTestMail, authConfig,
 } from "./api.js";
@@ -28,6 +29,7 @@ const TABS = [
   { key: "notices", label: "公告" },
   { key: "content", label: "内容" },
   { key: "partners", label: "单位" },
+  { key: "sponsors", label: "赞助者" },
   { key: "settings", label: "设置" },
   { key: "appeals", label: "申诉" },
   { key: "system", label: "系统" },
@@ -58,7 +60,7 @@ export async function adminView(el, path) {
 
   const tab = (path || "").split("/")[2] || "overview";
 
-  const [teams, subs, reviews, notices, appeals, profiles, members, sigs, docs, certs, partners, judgeList, intro, health, siteCfg, authCfg] = await Promise.all([
+  const [teams, subs, reviews, notices, appeals, profiles, members, sigs, docs, certs, partners, judgeList, intro, health, siteCfg, authCfg, sponsorList] = await Promise.all([
     listTeams().catch(() => []),
     allSubmissions().catch(() => []),
     allReviews().catch(() => []),
@@ -75,6 +77,7 @@ export async function adminView(el, path) {
     fetch("/api/health").then((r) => r.json()).catch(() => null),
     getSiteSettings().catch(() => null),
     authConfig().catch(() => null),
+    listSponsors().catch(() => []),
   ]);
 
   const reviewed = reviews.filter((r) => r.status === "submitted");
@@ -94,6 +97,7 @@ export async function adminView(el, path) {
       case "notices": return noticesTab(notices);
       case "content": return contentTab(docs);
       case "partners": return partnersTab(partners);
+      case "sponsors": return sponsorsTab(sponsorList);
       case "settings": return settingsTab(siteCfg, authCfg);
       case "appeals": return appealsTab(appeals);
       case "system": return systemTab(health, profiles);
@@ -122,7 +126,7 @@ export async function adminView(el, path) {
   `, { wide: true });
   bindShell();
 
-  wireAdmin(el, { teams, subs, reviews, notices, appeals, profiles, members, certs, partners, judgeList, tab });
+  wireAdmin(el, { teams, subs, reviews, notices, appeals, profiles, members, certs, partners, judgeList, sponsors: sponsorList, tab });
 }
 
 /* ------------------------------ 概览 ------------------------------ */
@@ -610,6 +614,135 @@ function openPartnerForm(el, existing) {
             m.close();
             toast(existing ? "已保存" : "已添加", "ok");
             adminView(el, "#/admin/partners");
+          } catch (e) {
+            toast(errMsg(e), "err");
+            busy(btn, false);
+          }
+        };
+      },
+    }
+  );
+}
+
+/* ------------------------------ 赞助者 ------------------------------ */
+
+function sponsorsTab(sponsors) {
+  const rows = (sponsors || []).slice().sort((a, b) => {
+    const amt = (Number(b.amount) || 0) - (Number(a.amount) || 0);
+    return amt || (a.sort || 100) - (b.sort || 100);
+  });
+  const total = rows.reduce((n, s) => n + (Number(s.amount) || 0), 0);
+  const shown = rows.filter((s) => s.show_amount).length;
+
+  return `
+    <div class="card block">
+      <div class="card-head"><h2>赞助者</h2><span class="card-note">显示在 #/sponsors</span></div>
+      <p class="small muted" style="margin-bottom:14px">
+        这里录入的是公开鸣谢名单，首页「鸣谢」入口与捐助卡片都能进。金额用于自动分档与排序，
+        默认不对访客公开；勾选「公开金额」才会在页面上显示。
+      </p>
+      <div class="grid grid-3" style="margin-bottom:16px">
+        <div class="stat"><div class="stat-label">支持者</div><div class="stat-value">${rows.length}</div></div>
+        <div class="stat"><div class="stat-label">累计支持</div><div class="stat-value">¥ ${esc(
+          total.toLocaleString("zh-CN", { maximumFractionDigits: 2 })
+        )}</div></div>
+        <div class="stat"><div class="stat-label">公开金额</div><div class="stat-value">${shown}<small>/ ${rows.length}</small></div></div>
+      </div>
+      <div class="row row-wrap" style="gap:10px">
+        <button class="btn btn-primary" id="btn-add-sponsor">+ 添加赞助者</button>
+        <a class="btn btn-ghost" href="#/sponsors" target="_blank" rel="noopener">预览鸣谢页</a>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-head"><h2>名单</h2><span class="card-note">${rows.length} 位</span></div>
+      ${
+        rows.length
+          ? rows
+              .map(
+                (s) => `
+        <div class="org-admin-row">
+          <span class="org-logo sm">${
+            s.avatar_url ? `<img src="${esc(s.avatar_url)}" alt="" />` : `<b>${esc(monogram(s.name))}</b>`
+          }</span>
+          <div style="min-width:0;flex:1">
+            <div class="strong" style="font-size:13.5px">
+              ${esc(s.name)}
+              ${
+                Number(s.amount) > 0
+                  ? `<span class="tag" style="margin-left:6px">¥ ${esc(
+                      Number(s.amount).toLocaleString("zh-CN", { maximumFractionDigits: 2 })
+                    )}${s.show_amount ? "" : " · 不公开"}</span>`
+                  : `<span class="tag" style="margin-left:6px">未填金额</span>`
+              }
+            </div>
+            <div class="tiny dim">${esc(fmtDate(s.created_at))}${
+                  s.message ? " · " + esc(s.message) : ""
+                }</div>
+          </div>
+          <span class="mono tiny dim">${esc(String(s.sort ?? 100))}</span>
+          <button class="btn btn-sm" data-edit-sponsor="${s.id}">编辑</button>
+          <button class="btn btn-sm btn-ghost" data-del-sponsor="${s.id}">删除</button>
+        </div>`
+              )
+              .join("")
+          : `<div class="empty" style="padding:26px">还没有赞助者，点上方「+ 添加赞助者」</div>`
+      }
+    </div>`;
+}
+
+function openSponsorForm(el, existing) {
+  const s = existing || {};
+  const m = modal(
+    `<h3>${existing ? "编辑赞助者" : "添加赞助者"}</h3>
+     <div class="grid grid-2" style="margin-top:14px">
+       <div class="field"><label class="req">称呼</label>
+         <input id="sf-name" value="${esc(s.name || "")}" placeholder="如：初九 / 匿名支持者" maxlength="40" />
+         <div class="hint">会原样展示在鸣谢页；需要匿名就填「匿名支持者」</div></div>
+       <div class="field"><label>支持金额（元）</label>
+         <input id="sf-amount" type="number" min="0" step="0.01" value="${esc(
+           s.amount == null ? "" : String(s.amount)
+         )}" placeholder="可不填" />
+         <div class="hint">≥200 特别鸣谢，≥50 热心支持，其余同行者；档位会展示，金额默认不公开</div></div>
+     </div>
+     <div class="field"><label>留言</label>
+       <input id="sf-msg" value="${esc(s.message || "")}" placeholder="一句想说的话，可留空" maxlength="120" /></div>
+     <div class="grid grid-2">
+       <div class="field"><label>头像地址</label>
+         <input id="sf-avatar" value="${esc(s.avatar_url || "")}" placeholder="https://…（留空用文字标）" /></div>
+       <div class="field"><label>排序</label>
+         <input id="sf-sort" type="number" value="${esc(String(s.sort ?? 100))}" />
+         <div class="hint">同档位内数字小的排前面</div></div>
+     </div>
+     <label class="row" style="gap:8px;cursor:pointer;margin-top:4px">
+       <input type="checkbox" id="sf-show" ${s.show_amount ? "checked" : ""} />
+       <span class="small">在鸣谢页公开这笔金额</span>
+     </label>
+     <div class="row" style="justify-content:flex-end;gap:9px;margin-top:16px">
+       <button class="btn btn-ghost" data-x="cancel">取消</button>
+       <button class="btn btn-primary" data-x="save">${existing ? "保存" : "添加"}</button>
+     </div>`,
+    {
+      onMount(host) {
+        const btn = host.querySelector('[data-x="save"]');
+        host.querySelector('[data-x="cancel"]').onclick = () => m.close();
+        btn.onclick = async () => {
+          const name = host.querySelector("#sf-name").value.trim();
+          if (!name) return toast("请填写赞助者称呼", "err");
+          busy(btn, true, "保存中…");
+          try {
+            await saveSponsor({
+              id: s.id,
+              name,
+              amount: host.querySelector("#sf-amount").value,
+              message: host.querySelector("#sf-msg").value,
+              avatarUrl: host.querySelector("#sf-avatar").value,
+              showAmount: host.querySelector("#sf-show").checked,
+              sort: host.querySelector("#sf-sort").value,
+            });
+            m.close();
+            toast(existing ? "已保存" : "已添加", "ok");
+            adminView(el, "#/admin/sponsors");
           } catch (e) {
             toast(errMsg(e), "err");
             busy(btn, false);
@@ -1504,6 +1637,30 @@ function wireAdmin(el, ctx) {
         await deletePartner(Number(b.dataset.delPartner));
         toast("已删除", "ok");
         adminView(el, "#/admin/partners");
+      } catch (e) {
+        toast(errMsg(e), "err");
+      }
+    };
+  });
+
+  const addSponsor = el.querySelector("#btn-add-sponsor");
+  if (addSponsor) addSponsor.onclick = () => openSponsorForm(el, null);
+
+  el.querySelectorAll("[data-edit-sponsor]").forEach((b) => {
+    b.onclick = () => {
+      const s = (ctx.sponsors || []).find((x) => x.id === Number(b.dataset.editSponsor));
+      if (s) openSponsorForm(el, s);
+    };
+  });
+
+  el.querySelectorAll("[data-del-sponsor]").forEach((b) => {
+    b.onclick = async () => {
+      const s = (ctx.sponsors || []).find((x) => x.id === Number(b.dataset.delSponsor));
+      if (!(await confirmBox("移除赞助者", `将从鸣谢页移除「${esc(s?.name || "")}」，记录会一并删除。`, "移除"))) return;
+      try {
+        await deleteSponsor(Number(b.dataset.delSponsor));
+        toast("已移除", "ok");
+        adminView(el, "#/admin/sponsors");
       } catch (e) {
         toast(errMsg(e), "err");
       }

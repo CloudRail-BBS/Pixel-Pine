@@ -329,6 +329,7 @@ export function navItems() {
     ["/results", "结果"],
     ["/judges", "评委团"],
     ["/notices", "公告"],
+    ["/sponsors", "鸣谢"],
   ];
   if (state.session) {
     items.push(["/me", "我的"]);

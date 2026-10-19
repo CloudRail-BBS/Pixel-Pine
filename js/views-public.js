@@ -7,7 +7,7 @@ import {
 } from "./config.js";
 import {
   allSubmissions, listAnnouncements, rankSubmissions, allReviews, trackCounts, awardPlan,
-  getDocument, listPartners, publicWorks, publicWork, getIntro,
+  getDocument, listPartners, listSponsors, publicWorks, publicWork, getIntro,
   listJudgesPublic, getJudgeAck, signJudgeCode,
 } from "./api.js";
 import { verifyCaptcha } from "./geetest.js";
@@ -38,9 +38,12 @@ function donateBlock(cfg) {
           d.note || "活动不收取任何费用，服务器与域名由志愿者承担。"
         )}</p>
       </div>
-      <a class="btn btn-sm donate-btn" href="${esc(d.url)}" target="_blank" rel="noopener noreferrer">
-        去爱发电 →
-      </a>
+      <div class="donate-actions">
+        <a class="donate-link" href="#/sponsors">鸣谢名单</a>
+        <a class="btn btn-sm donate-btn" href="${esc(d.url)}" target="_blank" rel="noopener noreferrer">
+          去爱发电 →
+        </a>
+      </div>
     </div>`;
 }
 
@@ -244,6 +247,132 @@ function partnerWall(list, title, note) {
           .join("")}
       </div>
     </div>`;
+}
+
+/* ---------------------------- 赞助者 ---------------------------- */
+
+const SPONSOR_TIERS = [
+  { key: "patron", min: 200, name: "特别鸣谢", note: "为本届赛事提供主要支持" },
+  { key: "support", min: 50, name: "热心支持", note: "" },
+  { key: "friend", min: 0, name: "同行者", note: "" },
+];
+
+function sponsorTier(amount) {
+  const n = Number(amount);
+  if (!Number.isFinite(n) || n <= 0) return "friend";
+  if (n >= SPONSOR_TIERS[0].min) return "patron";
+  if (n >= SPONSOR_TIERS[1].min) return "support";
+  return "friend";
+}
+
+const fmtMoney = (n) =>
+  Number(n).toLocaleString("zh-CN", { maximumFractionDigits: 2 });
+
+/** 头像位只放一个字，避免和旁边的昵称重复 */
+function sponsorMark(name) {
+  const s = String(name || "").trim();
+  if (!s) return "·";
+  if (/^[\x00-\x7F]+$/.test(s)) return s.slice(0, 2).toUpperCase();
+  return s.slice(0, 1);
+}
+
+function sponsorCard(s) {
+  return `
+    <article class="sponsor-card">
+      <span class="sponsor-avatar">${
+        s.avatar_url
+          ? `<img src="${esc(s.avatar_url)}" alt="" loading="lazy" />`
+          : esc(sponsorMark(s.name))
+      }</span>
+      <div class="sponsor-body">
+        <div class="sponsor-line">
+          <b class="sponsor-name">${esc(s.name)}</b>
+          ${
+            s.show_amount && Number(s.amount) > 0
+              ? `<span class="sponsor-amount">¥ ${esc(fmtMoney(s.amount))}</span>`
+              : ""
+          }
+        </div>
+        ${s.message ? `<p class="sponsor-msg">${esc(s.message)}</p>` : ""}
+        <div class="sponsor-meta">${esc(fmtDate(s.created_at))}</div>
+      </div>
+    </article>`;
+}
+
+export async function sponsorsView(el) {
+  let list = [];
+  try {
+    list = await listSponsors();
+  } catch (_) {}
+
+  const rows = (list || []).slice().sort((a, b) => {
+    const amt = (Number(b.amount) || 0) - (Number(a.amount) || 0);
+    if (amt) return amt;
+    const sort = (a.sort || 100) - (b.sort || 100);
+    if (sort) return sort;
+    return String(a.name || "").localeCompare(String(b.name || ""), "zh");
+  });
+
+  const groups = SPONSOR_TIERS.map((t) => ({
+    ...t,
+    items: rows.filter((s) => sponsorTier(s.amount) === t.key),
+  })).filter((g) => g.items.length);
+
+  el.innerHTML = shell(`
+    <div class="sponsor-head block">
+      <div class="sponsor-kicker">SPONSORS · 鸣谢</div>
+      <h1 class="sponsor-title">赞助者</h1>
+      <p class="sponsor-lead">
+        像素松全程公益免费，报名、参赛与评审均不收取任何费用。
+        以下朋友为服务器、域名与赛事运营提供了支持，让这件事得以持续。
+      </p>
+      ${
+        rows.length
+          ? `<div class="sponsor-count"><b>${rows.length}</b><span>位支持者</span></div>`
+          : ""
+      }
+    </div>
+
+    ${
+      rows.length
+        ? groups
+            .map(
+              (g) => `
+        <section class="sponsor-tier">
+          <div class="sponsor-tier-head">
+            <h2>${esc(g.name)}</h2>
+            ${g.note ? `<span class="card-note">${esc(g.note)}</span>` : ""}
+            <span class="sponsor-tier-num">${g.items.length}</span>
+          </div>
+          <div class="sponsor-grid">
+            ${g.items.map(sponsorCard).join("")}
+          </div>
+        </section>`
+            )
+            .join("")
+        : `<div class="empty" style="padding:48px 20px">
+             <p>还没有公开的赞助记录</p>
+             <p class="tiny" style="margin-top:8px">赛事期间收到的支持会陆续记录在这里。</p>
+             <a class="btn" href="#/home" style="margin-top:16px">返回首页</a>
+           </div>`
+    }
+
+    ${
+      rows.length
+        ? `<p class="tiny dim center" style="margin:26px 0 0">
+             名单由主办方维护；如需匿名或更正称呼，请联系主办方。
+           </p>`
+        : ""
+    }
+    <div id="donate-slot"></div>
+  `);
+  bindShell();
+
+  // 与首页一致：捐助入口异步补，配置接口出问题也不影响页面
+  loadAuthCfg().then(() => {
+    const slot = el.querySelector("#donate-slot");
+    if (slot) slot.innerHTML = donateBlock(AUTH_CFG);
+  });
 }
 
 /* ---------------------------- 规则 ---------------------------- */
