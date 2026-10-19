@@ -159,6 +159,9 @@ CREATE TABLE IF NOT EXISTS certificates (
   track TEXT NOT NULL,
   award_key TEXT NOT NULL,
   award_name TEXT NOT NULL,
+  -- 评委证书专用：award_key='judge' 时记录职务与负责赛道
+  judge_title TEXT,
+  judge_track TEXT,
   issued_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   issued_by TEXT,
   UNIQUE (submission_id, owner_id, award_key)

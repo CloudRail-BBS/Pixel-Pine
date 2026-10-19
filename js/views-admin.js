@@ -8,7 +8,7 @@ import {
   deleteAnnouncement, setTeamStatus, setCompatibility, assignReviews, publishResults,
   rankSubmissions, trackCounts, awardPlan, saveActivity, listAllAppeals, replyAppeal,
   setUserRole, listVersions, listDocuments, saveDocument,
-  listCertificates, issueCertificates, revokeCertificate,
+  listCertificates, issueCertificates, revokeCertificate, issueJudgeCertificate,
   listPartners, savePartner, deletePartner,
   listJudgesAll, saveJudge, deleteJudge, getIntro, plainFirst,
   getSiteSettings, saveSiteSettings, sendTestMail, authConfig,
@@ -88,7 +88,7 @@ export async function adminView(el, path) {
       case "teams": return teamsTab(teams, members);
       case "works": return worksTab(subs);
       case "review": return reviewTab(reviews, profiles, subs);
-      case "judges": return judgesTab(judgeList, sigs);
+      case "judges": return judgesTab(judgeList, sigs, certs);
       case "results": return resultsTab(subs, reviews);
       case "certs": return certsTab(subs, teams, members, certs);
       case "notices": return noticesTab(notices);
@@ -620,9 +620,11 @@ function openPartnerForm(el, existing) {
 
 /* ------------------------------ 评委团队 ------------------------------ */
 
-function judgesTab(judges, sigs) {
+function judgesTab(judges, sigs, certs) {
   const rows = (judges || []).slice().sort((a, b) => (a.sort || 100) - (b.sort || 100));
   const signed = (sigs || []).filter((x) => x.doc_key === "judge");
+  const judgeCerts = (certs || []).filter((c) => c.award_key === "judge");
+  const certOf = (j) => judgeCerts.find((c) => c.owner_id === (j.owner_id || `judge:${j.id}`));
   return `
     <div class="card block">
       <div class="card-head"><h2>评委团队</h2><span class="card-note">前台 #/judges</span></div>
@@ -657,6 +659,11 @@ function judgesTab(judges, sigs) {
                 }</div>
           </div>
           <span class="mono tiny dim">${esc(String(j.sort ?? 100))}</span>
+          ${
+            certOf(j)
+              ? `<a class="btn btn-sm btn-ghost" href="#/certificate/${encodeURIComponent(certOf(j).cert_code)}" target="_blank" rel="noopener">查看证书</a>`
+              : `<button class="btn btn-sm" data-issue-judge="${j.id}">颁发证书</button>`
+          }
           <button class="btn btn-sm" data-edit-judge="${j.id}">编辑</button>
           <button class="btn btn-sm btn-ghost" data-del-judge="${j.id}">删除</button>
         </div>`
@@ -1414,6 +1421,24 @@ function wireAdmin(el, ctx) {
     b.onclick = () => {
       const j = (ctx.judgeList || []).find((x) => x.id === Number(b.dataset.editJudge));
       if (j) openJudgeForm(el, j);
+    };
+  });
+
+  el.querySelectorAll("[data-issue-judge]").forEach((b) => {
+    b.onclick = async () => {
+      const j = (ctx.judgeList || []).find((x) => x.id === Number(b.dataset.issueJudge));
+      if (!j) return;
+      const trackText = j.tracks ? `负责赛道 ${esc(j.tracks)}` : "评审委员会";
+      if (!(await confirmBox("颁发评委证书", `将为「${esc(j.name)}」（${trackText}）颁发一张评委证书。`, "颁发"))) return;
+      busy(b, true, "颁发中…");
+      try {
+        const cert = await issueJudgeCertificate(j);
+        toast("已颁发，证书编号 " + cert.cert_code, "ok");
+        adminView(el, "#/admin/judges");
+      } catch (e) {
+        toast(errMsg(e, "颁发失败"), "err");
+        busy(b, false);
+      }
     };
   });
 

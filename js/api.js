@@ -485,6 +485,31 @@ export async function revokeCertificate(id) {
   if (!rows || !rows.length) throw new Error("撤销失败：没有权限");
 }
 
+/* ---------------- 评委证书 ---------------- */
+
+/** 证书表里的评委标识：没有账号的评委用 judge:<id> 占位，保证一人一张 */
+export const judgeCertOwner = (judge) => judge.owner_id || `judge:${judge.id}`;
+
+export async function issueJudgeCertificate(judge, awardName = "评委") {
+  const row = {
+    cert_code: makeCertCode("J"),
+    submission_id: 0,
+    team_id: 0,
+    team_name: judge.org || null,
+    owner_id: judgeCertOwner(judge),
+    holder_name: judge.name || "未命名",
+    work_title: judge.tracks || "评审工作",
+    track: "judge",
+    award_key: "judge",
+    award_name: awardName,
+    judge_title: judge.title || null,
+    judge_track: judge.tracks || null,
+    issued_by: state.me?.nickname || null,
+  };
+  const out = unwrap(await db.from("certificates").insert([row]).select());
+  return (out && out[0]) || row;
+}
+
 /* ---------------- 组织单位 ---------------- */
 
 export async function listPartners() {

@@ -34,8 +34,11 @@ function fmtPeriod(a) {
 }
 
 function certDocument(c, issuer, meta = {}) {
-  const track = trackOf(c.track);
-  const award = isAward(c);
+  const isJudge = c.award_key === "judge";
+  // 评委证书没有赛道，用一个固定抬头；trackOf("judge") 会是空对象
+  const track = isJudge ? { game: "评审委员会", type: "JUDGE", name: "评审委员" } : trackOf(c.track);
+  const award = !isJudge && isAward(c);
+  const formal = award || isJudge;
   const year = (() => {
     const d = new Date(c.issued_at);
     return isNaN(d) ? "" : String(d.getFullYear());
@@ -52,11 +55,11 @@ function certDocument(c, issuer, meta = {}) {
       </div>
     </div>
 
-    <div class="cert-page cert-page--formal ${award ? "is-award" : "is-part"}" id="cert-print">
+    <div class="cert-page cert-page--formal ${formal ? "is-award" : "is-part"}" id="cert-print">
       <div class="cert-inner">
         <div class="cert-spine" aria-hidden="true">PIXELSONG · 像素松 · ${esc(year)}</div>
         ${
-          award
+          formal
             ? ""
             : `<div class="cert-spine cert-spine--r" aria-hidden="true">
                  // BUILD ${"72H"} · TRACK-${esc(c.track)} · OUTPUT-DELIVERED · ${esc(c.cert_code)}
@@ -71,16 +74,20 @@ function certDocument(c, issuer, meta = {}) {
             <span class="cert-brand-text">像素松<small>PIXELSONG</small></span>
           </div>
           <div class="cert-head-right">
-            <div class="cert-series">${award ? "AWARD CERTIFICATE" : "CERTIFICATE OF PARTICIPATION"}</div>
+            <div class="cert-series">${
+              isJudge ? "CERTIFICATE OF JUDGING" : award ? "AWARD CERTIFICATE" : "CERTIFICATE OF PARTICIPATION"
+            }</div>
             <div class="cert-code">${esc(c.cert_code)}</div>
           </div>
         </div>
         <div class="cert-head-rule" aria-hidden="true"></div>
 
         <div class="cert-body">
-          <div class="cert-eyebrow">${esc(track.game || "")} · ${esc(track.type || "")}</div>
+          <div class="cert-eyebrow">${
+            isJudge ? "评审委员会 · JUDGE" : `${esc(track.game || "")} · ${esc(track.type || "")}`
+          }</div>
           ${
-            award
+            formal
               ? meta.theme || meta.period
                 ? `<div class="cert-meta">
                      ${meta.theme ? `<span>本届主题 · ${esc(meta.theme)}</span>` : ""}
@@ -98,9 +105,9 @@ function certDocument(c, issuer, meta = {}) {
                     .join("  ·  ")
                 )}</span></div>`
           }
-          <h1 class="cert-kind">${award ? "获奖证书" : "参赛证书"}</h1>
+          <h1 class="cert-kind">${isJudge ? "评委证书" : award ? "获奖证书" : "参赛证书"}</h1>
           ${
-            award
+            formal
               ? `<div class="cert-orn"><i></i><b></b><i></i></div>`
               : `<div class="cert-orn cert-orn--pixel"><i></i><i></i><i></i></div>`
           }
@@ -109,7 +116,22 @@ function certDocument(c, issuer, meta = {}) {
           <div class="cert-name">${esc(c.holder_name)}</div>
 
           ${
-            award
+            isJudge
+              ? `<p class="cert-text">
+                   于「像素松」限时创作活动中，受邀担任评审委员会<b>评委</b>，
+                   依据赛事规则对参赛作品进行独立、公正的评审，
+                   为本次活动的专业水准与公信力作出重要贡献。
+                 </p>
+                 <div class="cert-facts">
+                   <div><span>[ 职责 ]</span><b>参赛作品评审</b></div>
+                   ${c.judge_track ? `<div><span>[ 赛道 ]</span><b>${esc(c.judge_track)}</b></div>` : ""}
+                   ${
+                     [c.judge_title, c.team_name].filter(Boolean).length
+                       ? `<div><span>[ 职务 ]</span><b>${esc([c.judge_title, c.team_name].filter(Boolean).join(" · "))}</b></div>`
+                       : ""
+                   }
+                 </div>`
+              : award
               ? `<p class="cert-text">
                    于「像素松」限时创作活动中，作为 <b>${esc(c.team_name || "参赛队伍")}</b> 成员，
                    提交作品《<b>${esc(c.work_title)}</b>》。<br />
@@ -193,9 +215,13 @@ export async function certListView(el) {
                   (c) => `<a class="cert-row" href="#/certificate/${encodeURIComponent(c.cert_code)}">
                     <div style="min-width:0">
                       <div class="strong">${esc(c.award_name)}</div>
-                      <div class="tiny dim">《${esc(c.work_title)}》 · ${esc(c.cert_code)}</div>
+                      <div class="tiny dim">${
+                        c.award_key === "judge"
+                          ? esc(c.judge_track || "评审委员会")
+                          : `《${esc(c.work_title)}》`
+                      } · ${esc(c.cert_code)}</div>
                     </div>
-                    <span class="tag ${isAward(c) ? "tag-teal" : ""}">${esc(fmtDate(c.issued_at))}</span>
+                    <span class="tag ${isAward(c) || c.award_key === "judge" ? "tag-teal" : ""}">${esc(fmtDate(c.issued_at))}</span>
                   </a>`
                 )
                 .join("")
@@ -293,10 +319,26 @@ export async function verifyView(el, path) {
                 </div>
                 <div class="tbl-wrap"><table class="tbl"><tbody>
                   <tr><td class="small muted" style="width:96px">持证人</td><td class="strong">${esc(cert.holder_name)}</td></tr>
-                  <tr><td class="small muted">所属队伍</td><td>${esc(cert.team_name || "—")}</td></tr>
-                  <tr><td class="small muted">作品</td><td>《${esc(cert.work_title)}》</td></tr>
-                  <tr><td class="small muted">赛道</td><td>赛道 ${esc(cert.track)} · ${esc(trackOf(cert.track).name)}</td></tr>
-                  <tr><td class="small muted">奖项</td><td>${esc(cert.award_name)}</td></tr>
+                  ${
+                    cert.award_key === "judge"
+                      ? `<tr><td class="small muted">身份</td><td>评审委员会 · 评委</td></tr>
+                         ${
+                           cert.judge_track
+                             ? `<tr><td class="small muted">评审赛道</td><td>${esc(cert.judge_track)}</td></tr>`
+                             : ""
+                         }
+                         ${
+                           [cert.judge_title, cert.team_name].filter(Boolean).length
+                             ? `<tr><td class="small muted">职务</td><td>${esc(
+                                 [cert.judge_title, cert.team_name].filter(Boolean).join(" · ")
+                               )}</td></tr>`
+                             : ""
+                         }`
+                      : `<tr><td class="small muted">所属队伍</td><td>${esc(cert.team_name || "—")}</td></tr>
+                         <tr><td class="small muted">作品</td><td>《${esc(cert.work_title)}》</td></tr>
+                         <tr><td class="small muted">赛道</td><td>赛道 ${esc(cert.track)} · ${esc(trackOf(cert.track).name)}</td></tr>
+                         <tr><td class="small muted">奖项</td><td>${esc(cert.award_name)}</td></tr>`
+                  }
                   <tr><td class="small muted">颁发时间</td><td class="mono tiny">${esc(fmtFull(cert.issued_at))}</td></tr>
                 </tbody></table></div>
                 <div class="row" style="margin-top:14px">
