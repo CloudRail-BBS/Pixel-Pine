@@ -126,6 +126,34 @@ server {
 - 因此独立部署一套需要：自己的云服务环境、在 `js/config.js` 替换 `endpoint`/`publishableKey`、并重新分配域名。
 - 直接克隆本仓库运行，因 Origin 不匹配，登录与数据读写会被拒绝——这是预期行为，不是 bug。
 
+### 在自己服务器上部署时提示 `TypeError: Failed to fetch`
+
+这是**最常见的一条报错**，先看清楚它从哪来：请求是浏览器发的，不是容器发的。
+
+页面会向 `js/config.js` 里的 `endpoint`（当前是 `https://pixelsong.app.workbuddy.host`）发起跨域请求。
+云服务只对它绑定的域名返回 CORS 头，换一个域名访问时，浏览器的预检拿不到
+`Access-Control-Allow-Origin`，直接把请求拦掉，控制台就报 `Failed to fetch`。
+
+**30 秒确认**：F12 → Network，找标红的那条：
+
+- URL 是 `https://pixelsong.app.workbuddy.host/...` 且状态显示 `(blocked:origin)` 或 `CORS error` → 就是上面这个原因
+- URL 是你自己的域名、状态 `net::ERR_*` → 是容器或反向代理没通，与此无关
+
+**要真正自托管一套，需要三步**（缺一不可）：
+
+1. 新建一个属于自己的云服务应用（数据库 + 存储 + 登录）
+2. 用 `scripts/schema.sql` 与 `scripts/seed.sql` 建表、建策略、写初始数据
+3. 把 `js/config.js` 里的 `endpoint` 与 `publishableKey` 换成新应用的，并把你的域名加入白名单
+
+```bash
+# 在云服务的 SQL 控制台依次执行
+scripts/schema.sql    # 14 张表 + RLS + 权限函数
+scripts/seed.sql      # 活动配置 + 规则正文 + 活动介绍 + 主办单位
+```
+
+只做第 1、3 步、跳过第 2 步，页面会打开但所有查询报「数据表不存在」。
+只做第 2 步、跳过第 1 步，就是你现在看到的 `Failed to fetch`。
+
 ### 作品包存储
 
 云存储只有两档权限：`users/<uid>/` 仅本人可读写，`shared/<uid>/` 所有登录用户可读，没有“仅评委可读”，也不提供公开链接（只能签发最长 1 小时的临时地址）。因此：
