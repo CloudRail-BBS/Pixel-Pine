@@ -1,4 +1,4 @@
-import { cloud, state, loadSession, loadMe, loadActivity, route, render, navigate, esc } from "./core.js";
+import { cloud, state, loadSession, loadMe, loadActivity, route, render, navigate, esc, initTheme } from "./core.js";
 import {
   homeView, rulesView, loginView, resultsView, noticesView, cnkdView, worksView, workDetailView,
   judgesView,
@@ -90,6 +90,7 @@ async function boot() {
       throw new Error("SDK 未加载，请刷新页面或检查静态资源是否完整");
     }
     // 会话、活动配置失败不应该把整站打成白屏，降级继续渲染
+    initTheme();
     await restoreAuth().catch((e) => console.warn("[boot] session", e));
     await loadActivity().catch((e) => console.warn("[boot] activity", e));
     if (state.session) await loadMe(true).catch((e) => console.warn("[boot] me", e));

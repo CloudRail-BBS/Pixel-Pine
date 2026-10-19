@@ -12,6 +12,23 @@
 <link rel="icon" type="image/png" sizes="16x16" href="/assets/favicon-16.png" />
 <link rel="icon" type="image/svg+xml" sizes="any" href="/assets/logo.svg" />
 <link rel="apple-touch-icon" sizes="180x180" href="/assets/apple-touch-icon.png" />
+<script>
+  /* 先定主题再加载样式，避免首屏闪白/闪黑。首次访问跟随系统，手动选过就记住。 */
+  (function () {
+    try {
+      var saved = localStorage.getItem("ps-theme");
+      var theme =
+        saved === "light" || saved === "dark"
+          ? saved
+          : window.matchMedia && window.matchMedia("(prefers-color-scheme: light)").matches
+          ? "light"
+          : "dark";
+      document.documentElement.setAttribute("data-theme", theme);
+    } catch (e) {
+      document.documentElement.setAttribute("data-theme", "dark");
+    }
+  })();
+</script>
 <link rel="stylesheet" href="css/app.css" />
 </head>
 <body>

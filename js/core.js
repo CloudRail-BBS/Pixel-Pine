@@ -358,6 +358,15 @@ export function shell(content, opts = {}) {
         ${items.map(([p, t]) => `<a href="#${p}" class="${isOn(p) ? "active" : ""}">${t}</a>`).join("")}
       </nav>
       <div class="top-user">
+        <button class="theme-toggle" type="button" data-theme-toggle aria-label="切换明暗模式" title="切换明暗模式">
+          <svg class="icon-moon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M13.6 9.7A5.9 5.9 0 0 1 6.3 2.4a5.9 5.9 0 1 0 7.3 7.3Z" />
+          </svg>
+          <svg class="icon-sun" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" aria-hidden="true">
+            <circle cx="8" cy="8" r="3.1" />
+            <path d="M8 1.3v1.5M8 13.2v1.5M1.3 8h1.5M13.2 8h1.5M3.3 3.3l1.1 1.1M11.6 11.6l1.1 1.1M12.7 3.3l-1.1 1.1M4.4 11.6l-1.1 1.1" />
+          </svg>
+        </button>
         ${
           state.session
             ? `<span class="avatar">${esc(initials)}</span>
@@ -386,6 +395,54 @@ export function bindShell() {
       navigate("/home");
     };
   }
+}
+
+/* ------------------------------ 明暗主题 ------------------------------ */
+
+const THEME_KEY = "ps-theme";
+const THEME_BG = { dark: "#0b0d11", light: "#f7f8f5" };
+
+export function currentTheme() {
+  return document.documentElement.dataset.theme === "light" ? "light" : "dark";
+}
+
+function paintTheme(theme, persist) {
+  // 切换瞬间统一挂 240ms 过渡，避免大面积颜色硬切；首屏不触发
+  if (persist) {
+    document.documentElement.classList.add("theme-switching");
+    clearTimeout(paintTheme._timer);
+    paintTheme._timer = setTimeout(
+      () => document.documentElement.classList.remove("theme-switching"),
+      260
+    );
+  }
+  document.documentElement.dataset.theme = theme;
+  if (persist) {
+    try {
+      localStorage.setItem(THEME_KEY, theme);
+    } catch (_) {}
+  }
+  const meta = document.querySelector('meta[name="theme-color"]');
+  if (meta) meta.setAttribute("content", THEME_BG[theme]);
+  const label = `切换到${theme === "light" ? "深色" : "浅色"}模式`;
+  document.querySelectorAll("[data-theme-toggle]").forEach((b) => {
+    b.setAttribute("aria-label", label);
+    b.setAttribute("title", label);
+    b.setAttribute("aria-pressed", theme === "light" ? "true" : "false");
+  });
+}
+
+/** 页面启动时调用一次：同步按钮状态，并接管所有切换按钮的点击 */
+export function initTheme() {
+  paintTheme(currentTheme(), false);
+  document.addEventListener("click", (e) => {
+    const btn = e.target.closest("[data-theme-toggle]");
+    if (!btn) return;
+    e.preventDefault();
+    paintTheme(currentTheme() === "light" ? "dark" : "light", true);
+    // 重新渲染后按钮会重建，这里同步一次最新状态
+    paintTheme(currentTheme(), false);
+  });
 }
 
 export function requireLogin(el) {
