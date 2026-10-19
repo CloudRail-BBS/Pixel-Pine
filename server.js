@@ -65,8 +65,9 @@ const PS_PUBLISHABLE_KEY =
 function upstreamFor(req) {
   if (PS_UPSTREAM) return PS_UPSTREAM;
   if (PS_ENDPOINT) return "";
-  const host = String(req.headers.host || "").toLowerCase();
-  const prodHost = new URL(DEFAULT_ENDPOINT).host.toLowerCase();
+  const fwd = String(req.headers["x-forwarded-host"] || "").split(",")[0].trim();
+  const host = (fwd || String(req.headers.host || "")).toLowerCase().replace(/:\d+$/, "");
+  const prodHost = new URL(DEFAULT_ENDPOINT).host.toLowerCase().replace(/:\d+$/, "");
   return host === prodHost ? "" : DEFAULT_ENDPOINT;
 }
 
@@ -303,10 +304,10 @@ function proxyCloud(req, res, upstream) {
   const lib = isHttps ? require("https") : require("http");
 
   const headers = Object.assign({}, req.headers);
-  delete headers.host;
-  delete headers.origin;
-  delete headers.referer;
-  delete headers["accept-encoding"]; // 交给上游压缩，避免二次编码
+  // 逐跳头不能转发，否则 Node 会重复分块
+  for (const k of ["host", "origin", "referer", "accept-encoding", "connection", "keep-alive", "proxy-connection", "transfer-encoding", "te", "trailer", "upgrade"]) {
+    delete headers[k];
+  }
   headers["x-forwarded-host"] = req.headers.host || "";
   headers["x-forwarded-proto"] =
     (req.headers["x-forwarded-proto"] || "").split(",")[0].trim() ||
@@ -326,7 +327,10 @@ function proxyCloud(req, res, upstream) {
       const out = Object.assign({}, upRes.headers);
       // 同源场景不需要 CORS 头，也避免把上游白名单暴露给浏览器
       for (const k of Object.keys(out)) {
-        if (k.toLowerCase().startsWith("access-control-")) delete out[k];
+        const low = k.toLowerCase();
+        if (low.startsWith("access-control-") || ["connection", "keep-alive", "transfer-encoding", "trailer", "upgrade"].includes(low)) {
+          delete out[k];
+        }
       }
       out["x-proxied-by"] = "pixelsong";
       res.writeHead(upRes.statusCode || 502, out);
