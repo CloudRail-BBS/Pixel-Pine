@@ -262,6 +262,24 @@ export async function verifyCaptcha(prefetched) {
                     .map((e) => `${e.name.replace(/^https?:\/\//, "").slice(0, 60)} ${Math.round(e.duration)}ms ${e.transferSize || 0}B`);
                   console.info("[geetest] 相关网络请求:", res.slice(-10));
                 } catch (_) {}
+                try {
+                  const wrap = document.querySelector('[class*="geetest_popup_wrap"]');
+                  if (wrap) {
+                    const cs = getComputedStyle(wrap);
+                    console.info("[geetest] wrap 计算样式", {
+                      display: cs.display,
+                      position: cs.position,
+                      width: cs.width,
+                      height: cs.height,
+                      top: cs.top,
+                      visibility: cs.visibility,
+                      opacity: cs.opacity,
+                      transform: cs.transform,
+                      parent: wrap.parentElement ? wrap.parentElement.tagName : "-",
+                      inline: wrap.getAttribute("style") || "(none)",
+                    });
+                  }
+                } catch (_) {}
                 finish({
                   ok: false,
                   reason: "人机验证没有弹出，请检查极验 Captcha ID 与域名白名单",

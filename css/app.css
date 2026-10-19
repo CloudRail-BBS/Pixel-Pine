@@ -99,6 +99,10 @@
 
 html { scroll-behavior: smooth; }
 
+/* 极验弹窗用百分比高度铺满视口，html/body 没有确定高度时会算成 0 */
+html { height: 100%; }
+body { min-height: 100%; }
+
 html, body {
   margin: 0;
   padding: 0;
