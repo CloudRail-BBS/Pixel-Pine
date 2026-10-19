@@ -22,6 +22,9 @@ RUN addgroup -S app && adduser -S app -G app \
 USER app
 
 ENV PORT=3000
+# 镜像默认自足运行：账号、数据、文件都落在 /app/data，不需要任何外部服务。
+# 想接回托管云服务时显式传 -e PS_MODE=cloud。
+ENV PS_MODE=local
 EXPOSE 3000
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 \

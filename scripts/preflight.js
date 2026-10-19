@@ -66,6 +66,18 @@ check("源码不可通过静态服务访问", () => {
   return { ok, detail: ok ? "DENY_FILES 已生效" : "server.js 未加入 DENY_FILES" };
 }, "否则 /server.js 可被直接下载");
 
+// 运行模式契约：服务端下发 { local: true }，前端 config.js 必须把它透传到
+// PUBLIC_CONFIG，否则 core.js 会误用云 SDK，表现为注册失败、规则页空白。
+check("运行模式配置贯通", () => {
+  const server = fs.readFileSync(path.join(ROOT, "server.js"), "utf8");
+  const cfg = fs.readFileSync(path.join(ROOT, "js/config.js"), "utf8");
+  const emits = /local:\s*true/.test(server);
+  const passes = /RUNTIME\.local\s*=\s*true/.test(cfg);
+  if (!emits) return { ok: false, detail: "server.js 未下发 local 标记" };
+  if (!passes) return { ok: false, detail: "js/config.js 丢失 local 标记，前端会误走云 SDK" };
+  return { ok: true, detail: "服务端下发 → 前端透传均正常" };
+}, "改 config.js 时必须保留 BOOT.local 透传");
+
 const envFile = path.join(ROOT, ".env");
 const hasEnv = fs.existsSync(envFile);
 check(".env 文件", () => ({

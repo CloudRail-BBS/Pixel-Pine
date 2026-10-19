@@ -17,6 +17,10 @@ const RUNTIME = {
     (BOOT && BOOT.publishableKey) ||
     "wbpk_ASDGMaTrV7dAuvQijziP8z_1cmrp1ZytZS54tR74qrBdBG6NGJrS6c0",
 };
+// local / proxy 必须原样透传：core.js 靠 RUNTIME.local 决定用内置后端还是云 SDK，
+// 丢掉这个字段前端就会绕过本地服务去打云端接口，表现为注册失败、规则加载为空。
+if (BOOT && BOOT.local) RUNTIME.local = true;
+if (BOOT && BOOT.proxy) RUNTIME.proxy = true;
 if (BOOT && BOOT.endpoint) RUNTIME.endpoint = BOOT.endpoint;
 // 没有注入时交给 SDK 回落到 location.origin，不再指向任何外部域名
 
