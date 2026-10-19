@@ -157,7 +157,9 @@ export async function verifyCaptcha(prefetched) {
       window.initGeetest4(
         {
           captchaId,
-          product: "popup",
+          // 这里必须是 bind：只有 bind 模式能直接调用 showCaptcha() 弹验证码，
+          // popup 模式要先 appendTo 一个按钮、由用户点按钮才弹，不适合本流程
+          product: "bind",
           language: "zho",
         },
         (captcha) => {
