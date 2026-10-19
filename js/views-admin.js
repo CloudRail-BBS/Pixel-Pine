@@ -863,6 +863,7 @@ function settingsTab(cfg, auth) {
   const gt = cfg.geetest || {};
   const vt = cfg.virustotal || {};
   const ck = cfg.cnkd || {};
+  const dn = cfg.donate || {};
   // 给极验控制台的填写示例，直接用当前访问地址生成，避免填错
   const siteOrigin = typeof location !== "undefined" ? location.origin : "https://你的域名";
   const siteHost = typeof location !== "undefined" ? location.hostname : "你的域名";
@@ -979,6 +980,28 @@ function settingsTab(cfg, auth) {
         <div class="hint">需与 CNKD 平台登记值逐字一致。留空时按当前访问域名自动生成，换域名不必改配置。</div>
       </div>
       ${ck.hasSecret ? `<label class="row" style="gap:7px;cursor:pointer"><input type="checkbox" id="ck-clear" /><span class="small">清除已保存的 Secret</span></label>` : ""}
+    </div>
+
+    <div class="card block">
+      <div class="card-head">
+        <h2>捐助渠道</h2>
+        <span class="card-note">${dn.enabled ? "已开启" : "未开启"}</span>
+      </div>
+      <p class="small muted" style="margin-bottom:16px">
+        活动本身不收费。开启后，首页底部会出现一个低调的「支持像素松」入口，跳转到你的爱发电主页，
+        可注明用途（服务器、域名等）。不填写链接时不会显示。
+      </p>
+      <label class="row" style="gap:9px;cursor:pointer;margin-bottom:16px">
+        <input type="checkbox" id="dn-enabled" ${dn.enabled ? "checked" : ""} />
+        <span class="small">在首页显示支持入口</span>
+      </label>
+      <div class="field"><label>爱发电主页链接</label>
+        <input id="dn-url" value="${esc(dn.url || "")}" placeholder="https://afdian.com/a/yourname" />
+        <div class="hint">只接受 https://afdian.com 或 afdian.net 下的地址，其他链接不会生效</div>
+      </div>
+      <div class="field"><label>一句说明（可选）</label>
+        <input id="dn-note" value="${esc(dn.note || "")}" maxlength="60" placeholder="例：用于服务器与域名续费" />
+      </div>
     </div>
 
     <div class="card block">
@@ -1354,7 +1377,15 @@ function wireAdmin(el, ctx) {
           clientId: val(el, "#ck-id"),
           redirectUri: val(el, "#ck-redirect"),
         },
+        donate: {
+          enabled: checked(el, "#dn-enabled"),
+          url: val(el, "#dn-url"),
+          note: val(el, "#dn-note"),
+        },
       };
+      if (patch.donate.enabled && !/^https:\/\/(?:www\.)?(afdian\.com|afdian\.net)\//i.test(patch.donate.url)) {
+        return toast("请填写爱发电主页链接，形如 https://afdian.com/a/yourname", "err");
+      }
       const pass = val(el, "#st-pass");
       if (el.querySelector("#st-clear-pass")?.checked) patch.smtp.pass = "__clear__";
       else if (pass) patch.smtp.pass = pass;

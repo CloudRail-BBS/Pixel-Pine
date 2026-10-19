@@ -18,8 +18,28 @@ let pendingOtp = null;
 
 /* ---------------------------- 首页 ---------------------------- */
 
+/**
+ * 首页底部的捐助入口。只有后台开启且填了爱发电链接才会渲染，
+ * 刻意做得轻：一条虚线卡片，不抢正文的注意力。
+ */
+function donateBlock(cfg) {
+  const d = cfg && cfg.donate;
+  if (!d || !d.enabled || !d.url) return "";
+  return `
+    <div class="donate-card">
+      <div style="min-width:0">
+        <div class="strong" style="font-size:13.5px">支持像素松</div>
+        <p class="tiny dim" style="margin:5px 0 0">${esc(
+          d.note || "活动不收取任何费用，服务器与域名由志愿者承担。"
+        )}</p>
+      </div>
+      <a class="btn btn-sm" href="${esc(d.url)}" target="_blank" rel="noopener noreferrer">去爱发电</a>
+    </div>`;
+}
+
 export async function homeView(el) {
   const a = state.activity || DEFAULT_ACTIVITY;
+  await loadAuthCfg(); // 首页底部可能展示捐助入口，开关改完要即时生效
   let teams = [];
   let subs = [];
   let notices = [];
@@ -147,6 +167,7 @@ export async function homeView(el) {
     </div>
 
     ${partnerWall(partners, "组织单位", "主办、协办与支持")}
+    ${donateBlock(AUTH_CFG)}
   `);
   bindShell();
 }

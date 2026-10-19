@@ -634,11 +634,22 @@ const server = http.createServer({ maxHeaderSize: 64 * 1024 }, async (req, res) 
     const smtpOn = LOCAL_MODE && Boolean(local.getSettings().smtp && local.getSettings().smtp.enabled);
     const g = geetestCfg();
     const c = cnkdCfg();
+    const d = (LOCAL_MODE && local.getSettings().donate) || {};
+    const donateUrl = String(d.url || "").trim();
+    // 只放行爱发电域名，避免后台误填成任意链接
+    const donateOk = Boolean(
+      d.enabled && /^https:\/\/(?:www\.)?(afdian\.com|afdian\.net)\//i.test(donateUrl)
+    );
     return sendJson(res, 200, {
       mode: LOCAL_MODE ? "local" : "cloud",
       otp: LOCAL_MODE ? smtpOn : true,
       captcha: { enabled: g.enabled, provider: "geetest", captchaId: g.id || null },
       cnkd: { enabled: c.enabled },
+      donate: {
+        enabled: donateOk,
+        url: donateOk ? donateUrl : "",
+        note: donateOk ? String(d.note || "").trim() : "",
+      },
       // 空库：还没有任何账号，此时必须允许不带验证码创建首个主办方，
       // 否则「配 SMTP 需要管理员、注册需要 SMTP」会死锁
       firstRun: LOCAL_MODE && local.rows("profiles").length === 0,

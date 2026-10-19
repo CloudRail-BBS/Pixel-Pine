@@ -1342,3 +1342,13 @@ a.org-card:hover .org-out { opacity: 1; }
   transition: background-color 0.22s var(--ease), color 0.22s var(--ease),
     border-color 0.22s var(--ease), box-shadow 0.22s var(--ease) !important;
 }
+
+/* ---------- 捐助入口 ---------- */
+.donate-card {
+  margin-top: 26px; padding: 15px 18px;
+  display: flex; align-items: center; justify-content: space-between; gap: 18px;
+  border: 1px dashed var(--line-strong);
+  border-radius: 8px;
+  background: var(--hover-1);
+}
+.donate-card .btn { flex: none; }
