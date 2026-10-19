@@ -8,6 +8,10 @@ services:
       - "${HOST_PORT:-3000}:3000"
     environment:
       PORT: 3000
+      # 数据面同源代理的目标。留空（PS_UPSTREAM=）则改为直连 PS_ENDPOINT。
+      # 默认指向已发布的云服务，因此容器起来就能登录、读写数据，无需改代码。
+      PS_UPSTREAM: ${PS_UPSTREAM-https://pixelsong.app.workbuddy.host}
+      PS_ENDPOINT: ${PS_ENDPOINT:-}
       GEETEST_CAPTCHA_ID: ${GEETEST_CAPTCHA_ID:-}
       GEETEST_CAPTCHA_KEY: ${GEETEST_CAPTCHA_KEY:-}
       CNKD_CLIENT_ID: ${CNKD_CLIENT_ID:-}

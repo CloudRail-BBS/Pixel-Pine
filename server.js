@@ -44,6 +44,49 @@ const VT_KEY = process.env.VT_API_KEY || "";
 const VT_TTL = 30 * 60 * 1000;
 const vtCache = new Map();
 
+/* ---------- 同源代理：让任意域名都能直接跑 ----------
+ * 数据面（/.cloud/**）的跨源预检会返回 403 且不带 CORS 头，浏览器必然报
+ * "TypeError: Failed to fetch"。把 /.cloud/** 反代到发布的 endpoint 后，
+ * 浏览器看到的是同源请求，不再有预检，也不依赖对方返回 CORS。
+ */
+const DEFAULT_ENDPOINT = "https://pixelsong.app.workbuddy.host";
+const PS_UPSTREAM = String(process.env.PS_UPSTREAM || "").trim().replace(/\/+$/, "");
+const PS_ENDPOINT = String(process.env.PS_ENDPOINT || "").trim().replace(/\/+$/, "");
+const PS_PUBLISHABLE_KEY =
+  process.env.PS_PUBLISHABLE_KEY ||
+  "wbpk_ASDGMaTrV7dAuvQijziP8z_1cmrp1ZytZS54tR74qrBdBG6NGJrS6c0";
+
+/**
+ * 决定这次请求的数据面走向。
+ *  - 显式 PS_UPSTREAM：全部走代理
+ *  - 显式 PS_ENDPOINT：直连，不代理
+ *  - 两者都没配：在官方域名上直连，在其他域名（IP、localhost、自有域名）上自动代理
+ */
+function upstreamFor(req) {
+  if (PS_UPSTREAM) return PS_UPSTREAM;
+  if (PS_ENDPOINT) return "";
+  const host = String(req.headers.host || "").toLowerCase();
+  const prodHost = new URL(DEFAULT_ENDPOINT).host.toLowerCase();
+  return host === prodHost ? "" : DEFAULT_ENDPOINT;
+}
+
+/** 下发给浏览器的运行配置；代理模式下省略 endpoint，SDK 自动用 location.origin */
+function bootConfig(req) {
+  const cfg = { publishableKey: PS_PUBLISHABLE_KEY };
+  if (upstreamFor(req)) {
+    cfg.proxy = true;
+  } else {
+    cfg.endpoint = PS_ENDPOINT || DEFAULT_ENDPOINT;
+  }
+  return cfg;
+}
+
+function injectBoot(html, req) {
+  const json = JSON.stringify(bootConfig(req)).replace(/</g, "\\u003c");
+  const tag = `<script>window.__PS_CONFIG__=${json};</script>`;
+  return html.includes("<!--PS_BOOT-->") ? html.replace("<!--PS_BOOT-->", tag) : html;
+}
+
 async function vtLookup(hash) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 8000);
@@ -248,6 +291,58 @@ function sendRedirect(res, location) {
 
 /* ------------------------------- 静态文件 ------------------------------- */
 
+function proxyCloud(req, res, upstream) {
+  let target;
+  try {
+    target = new URL(upstream + req.url);
+  } catch (_) {
+    return sendJson(res, 500, { error: "bad_upstream" });
+  }
+
+  const isHttps = target.protocol === "https:";
+  const lib = isHttps ? require("https") : require("http");
+
+  const headers = Object.assign({}, req.headers);
+  delete headers.host;
+  delete headers.origin;
+  delete headers.referer;
+  delete headers["accept-encoding"]; // 交给上游压缩，避免二次编码
+  headers["x-forwarded-host"] = req.headers.host || "";
+  headers["x-forwarded-proto"] =
+    (req.headers["x-forwarded-proto"] || "").split(",")[0].trim() ||
+    (req.socket.encrypted ? "https" : "http");
+
+  const upReq = lib.request(
+    {
+      protocol: target.protocol,
+      hostname: target.hostname,
+      port: target.port || (isHttps ? 443 : 80),
+      path: target.pathname + target.search,
+      method: req.method,
+      headers,
+      timeout: 120000,
+    },
+    (upRes) => {
+      const out = Object.assign({}, upRes.headers);
+      // 同源场景不需要 CORS 头，也避免把上游白名单暴露给浏览器
+      for (const k of Object.keys(out)) {
+        if (k.toLowerCase().startsWith("access-control-")) delete out[k];
+      }
+      out["x-proxied-by"] = "pixelsong";
+      res.writeHead(upRes.statusCode || 502, out);
+      upRes.pipe(res);
+      upRes.on("error", () => res.destroy());
+    }
+  );
+
+  upReq.on("timeout", () => upReq.destroy(new Error("upstream_timeout")));
+  upReq.on("error", (err) => {
+    if (res.headersSent) return res.destroy();
+    sendJson(res, 502, { error: "upstream_unreachable", message: err.message });
+  });
+  req.pipe(upReq);
+}
+
 function serveStatic(req, res) {
   let pathname;
   try {
@@ -280,12 +375,13 @@ function serveStatic(req, res) {
       const index = path.join(ROOT, "index.html");
       return fs.readFile(index, (e2, buf) => {
         if (e2) return sendJson(res, 404, { error: "not_found" });
+        const html = Buffer.from(injectBoot(buf.toString("utf8"), req), "utf8");
         res.writeHead(200, {
           "Content-Type": MIME[".html"],
           "Cache-Control": "no-cache",
-          "Content-Length": buf.length,
+          "Content-Length": html.length,
         });
-        res.end(buf);
+        res.end(html);
       });
     }
     const ext = path.extname(filePath).toLowerCase();
@@ -301,14 +397,15 @@ function serveStatic(req, res) {
       : "public, max-age=86400";
     fs.readFile(filePath, (e2, buf) => {
       if (e2) return sendJson(res, 500, { error: "read_failed" });
+      const body = ext === ".html" ? Buffer.from(injectBoot(buf.toString("utf8"), req), "utf8") : buf;
       res.writeHead(200, {
         "Content-Type": type,
         "Cache-Control": cache,
         ETag: etag,
-        "Content-Length": buf.length,
+        "Content-Length": body.length,
         "X-Content-Type-Options": "nosniff",
       });
-      res.end(buf);
+      res.end(body);
     });
   });
 }
@@ -337,6 +434,10 @@ const server = http.createServer(async (req, res) => {
       checks: {
         nodeFetch: typeof fetch === "function",
         envFile: fs.existsSync(path.join(ROOT, ".env")),
+      },
+      dataPlane: {
+        mode: PS_UPSTREAM ? "proxy" : PS_ENDPOINT ? "direct" : "auto",
+        upstream: PS_UPSTREAM || PS_ENDPOINT || DEFAULT_ENDPOINT,
       },
     });
   }
@@ -482,6 +583,12 @@ const server = http.createServer(async (req, res) => {
     return sendJson(res, 200, { ok: true, profile: rec.profile });
   }
 
+  if (url.pathname.startsWith("/.cloud/")) {
+    const upstream = upstreamFor(req);
+    if (!upstream) return sendJson(res, 404, { error: "proxy_disabled" });
+    return proxyCloud(req, res, upstream);
+  }
+
   if (url.pathname.startsWith("/api/")) {
     return sendJson(res, 404, { error: "unknown_api" });
   }
@@ -500,4 +607,11 @@ server.listen(PORT, HOST, () => {
   console.log(`[pixelsong] v${APP_VERSION} listening on ${HOST}:${PORT}`);
   console.log(`[pixelsong] geetest ${GEETEST_ID && GEETEST_KEY ? "enabled" : "disabled"}`);
   console.log(`[pixelsong] cnkd    ${CNKD_CLIENT_ID ? (CNKD_CLIENT_SECRET ? "confidential" : "public") : "disabled"}`);
+  console.log(
+    PS_UPSTREAM
+      ? `[pixelsong] data    proxy → ${PS_UPSTREAM}`
+      : PS_ENDPOINT
+      ? `[pixelsong] data    direct → ${PS_ENDPOINT}`
+      : `[pixelsong] data    auto → 官方域名直连，其他域名自动代理到 ${DEFAULT_ENDPOINT}`
+  );
 });

@@ -1,8 +1,30 @@
-export const PUBLIC_CONFIG = {
-  endpoint: "https://pixelsong.app.workbuddy.host",
-  oauthRelayBaseUrl: "https://www.workbuddy.cn/v2/as/genie-baas/oauth",
-  publishableKey: "wbpk_ASDGMaTrV7dAuvQijziP8z_1cmrp1ZytZS54tR74qrBdBG6NGJrS6c0",
+/**
+ * 运行配置
+ *
+ * 由服务端在 index.html 里注入 window.__PS_CONFIG__：
+ *  - 代理模式（容器部署，PS_UPSTREAM 已配置）：不传 endpoint，SDK 自动使用
+ *    当前页面的 location.origin，配合服务端 /.cloud/** 反代实现同源访问
+ *  - 直连模式（平台部署）：endpoint 指向发布的云服务域名
+ *
+ * 静态托管（没有 Node 服务端）时没有注入，退回线上域名，行为与之前一致。
+ */
+const BOOT = (typeof window !== "undefined" && window.__PS_CONFIG__) || null;
+const FALLBACK_ENDPOINT = "https://pixelsong.app.workbuddy.host";
+
+const RUNTIME = {
+  oauthRelayBaseUrl:
+    (BOOT && BOOT.oauthRelayBaseUrl) || "https://www.workbuddy.cn/v2/as/genie-baas/oauth",
+  publishableKey:
+    (BOOT && BOOT.publishableKey) ||
+    "wbpk_ASDGMaTrV7dAuvQijziP8z_1cmrp1ZytZS54tR74qrBdBG6NGJrS6c0",
 };
+if (BOOT) {
+  if (BOOT.endpoint) RUNTIME.endpoint = BOOT.endpoint;
+} else {
+  RUNTIME.endpoint = FALLBACK_ENDPOINT;
+}
+
+export const PUBLIC_CONFIG = RUNTIME;
 
 export const TRACKS = [
   { code: "A", game: "我的世界", type: "模组", name: "MC 模组", side: "mc" },

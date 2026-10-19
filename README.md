@@ -40,12 +40,12 @@ js/config.js          公开配置、赛道、评分维度、公约文本
 js/core.js            云客户端、会话、路由、Markdown 渲染
 js/api.js             数据访问
 js/views-*.js         页面（按需动态加载）
-server.js             静态服务 + 极验/CNKD 服务端校验
+server.js             静态服务 + 数据面同源代理 + 极验/CNKD 服务端校验
 scripts/preflight.js  部署前自检
 scripts/smoke.js      线上冒烟测试
 ```
 
-服务端只做三件事：托管静态文件、极验二次校验、CNKD OAuth 换码。**所有密钥只存在于环境变量**。
+服务端做四件事：托管静态文件、数据面同源代理、极验二次校验、CNKD OAuth 换码。**所有密钥只存在于环境变量**。
 
 ## 本地运行
 
@@ -59,11 +59,15 @@ npm start
 
 访问 http://localhost:3000 。
 
+**不需要任何配置。** 服务会自动判断：在官方域名上直连数据面，在 localhost、IP 或自有域名上自动启用同源代理（见下节）。
+
 ## Docker 部署
 
 ```bash
 docker compose up -d --build
 ```
+
+起来就能用，**不需要先配任何环境变量**：容器默认启用数据面同源代理，IP 或域名访问都能登录。
 
 镜像基于 `node:22-alpine`，非 root 用户运行，内置健康检查。默认映射 `3000` 端口，可用 `HOST_PORT` 覆盖。
 
@@ -120,39 +124,56 @@ server {
 
 ## 关于后端
 
-本仓库**不包含数据库与账号系统**。页面通过 `js/config.js` 中的 `endpoint` 与 `publishableKey` 直连托管云服务（PostgreSQL + Auth），由行级安全策略（RLS）隔离数据。
+本仓库**不包含数据库与账号系统**。页面通过 `/.cloud/**` 访问托管云服务（PostgreSQL + Auth + 存储），由行级安全策略（RLS）隔离数据。
 
-- `publishableKey` 是**设计上可公开**的标识，本身不含权限，服务端会校验请求来源域名。
-- 因此独立部署一套需要：自己的云服务环境、在 `js/config.js` 替换 `endpoint`/`publishableKey`、并重新分配域名。
-- 直接克隆本仓库运行，因 Origin 不匹配，登录与数据读写会被拒绝——这是预期行为，不是 bug。
+### 为什么开箱就能跑
 
-### 在自己服务器上部署时提示 `TypeError: Failed to fetch`
+服务端内置**数据面同源代理**：浏览器把请求发到当前域名下的 `/.cloud/**`，Node 收到后原样转发给已发布的数据面。
 
-这是**最常见的一条报错**，先看清楚它从哪来：请求是浏览器发的，不是容器发的。
+```
+浏览器 → http://你的服务器:3000/.cloud/**  →  Node 转发  →  https://pixelsong.app.workbuddy.host/.cloud/**
+```
 
-页面会向 `js/config.js` 里的 `endpoint`（当前是 `https://pixelsong.app.workbuddy.host`）发起跨域请求。
-云服务只对它绑定的域名返回 CORS 头，换一个域名访问时，浏览器的预检拿不到
-`Access-Control-Allow-Origin`，直接把请求拦掉，控制台就报 `Failed to fetch`。
+浏览器看到的是同源请求，不做预检，也不要求对方返回 CORS 头，所以用 IP、端口或任意域名访问都能登录和读写。
 
-**30 秒确认**：F12 → Network，找标红的那条：
+判断顺序：
 
-- URL 是 `https://pixelsong.app.workbuddy.host/...` 且状态显示 `(blocked:origin)` 或 `CORS error` → 就是上面这个原因
-- URL 是你自己的域名、状态 `net::ERR_*` → 是容器或反向代理没通，与此无关
+| 环境变量 | 行为 |
+|---|---|
+| `PS_UPSTREAM=https://…` | 全部走代理到该地址 |
+| `PS_ENDPOINT=https://…` | 直连该地址，不代理（要求对方允许你的来源） |
+| 都不配 | 官方域名直连；其他域名自动代理到官方数据面 |
 
-**要真正自托管一套，需要三步**（缺一不可）：
+当前走向可以直接查：`curl http://localhost:3000/api/health`，看 `dataPlane` 字段。
 
-1. 新建一个属于自己的云服务应用（数据库 + 存储 + 登录）
-2. 用 `scripts/schema.sql` 与 `scripts/seed.sql` 建表、建策略、写初始数据
-3. 把 `js/config.js` 里的 `endpoint` 与 `publishableKey` 换成新应用的，并把你的域名加入白名单
+### 默认与主站共用数据
+
+不配 `PS_UPSTREAM` 时，自托管站点连的是**已发布的那套数据库**：你在自建站点注册的账号在主站也能登录，作品、队伍、评分都是同一份。
+
+想让数据完全独立，需要自己建一套云服务应用：
+
+1. 新建应用（数据库 + 存储 + 登录），拿到新的 endpoint 与 publishableKey
+2. 在它的 SQL 控制台依次执行 `scripts/schema.sql` 与 `scripts/seed.sql`
+3. 配 `PS_UPSTREAM` 指向新应用，`PS_PUBLISHABLE_KEY` 换成新 key
 
 ```bash
-# 在云服务的 SQL 控制台依次执行
 scripts/schema.sql    # 14 张表 + RLS + 权限函数
 scripts/seed.sql      # 活动配置 + 规则正文 + 活动介绍 + 主办单位
 ```
 
-只做第 1、3 步、跳过第 2 步，页面会打开但所有查询报「数据表不存在」。
-只做第 2 步、跳过第 1 步，就是你现在看到的 `Failed to fetch`。
+第一次登录后还需要提一次管理员（角色有列级保护，客户端改不了）：
+
+```sql
+UPDATE profiles SET role = 'admin' WHERE owner_id = '<你的 UID>';
+```
+
+UID 在「我的」页面能看到。
+
+### 以前为什么会报 `TypeError: Failed to fetch`
+
+数据面的跨源预检返回 **403，且不带任何 `Access-Control-Allow-Origin` 头**。浏览器因此判定预检失败，任何带自定义头（如 `x-wb-webapp-access-key`）的请求都发不出去，前端只能拿到 `Failed to fetch`。
+
+同源代理绕开了这条路径，不需要对方改 CORS，也不需要在浏览器里做任何设置。
 
 ### 作品包存储
 
