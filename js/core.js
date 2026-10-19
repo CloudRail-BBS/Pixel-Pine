@@ -484,8 +484,13 @@ export function renderDoc(src) {
     }
   };
 
-  for (const raw of lines) {
-    const line = raw.trim();
+  /** GFM 表格：| a | b |  +  |---|:--:| 分隔行 */
+  const isTableRow = (l) => /^\|.*\|$/.test(l);
+  const isTableSep = (l) => /^\|[\s:|-]+\|$/.test(l) && l.includes("-");
+  const splitRow = (l) => l.replace(/^\||\|$/g, "").split("|").map((c) => c.trim());
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i].trim();
     if (!line) {
       flushPara();
       closeList();
@@ -500,11 +505,63 @@ export function renderDoc(src) {
       out.push(`<h2 id="${id}">${inline(h2[1])}</h2>`);
       continue;
     }
+    // 一级标题：正文开头的那个由页面单独渲染，这里跳过；其余降级为 h2
+    const h1 = line.match(/^#\s+(.*)$/);
+    if (h1) {
+      flushPara();
+      closeList();
+      if (!out.length) continue;
+      const id = "sec-" + (toc.length + 1);
+      toc.push({ id, title: h1[1] });
+      out.push(`<h2 id="${id}">${inline(h1[1])}</h2>`);
+      continue;
+    }
+    // 引用行
+    const quote = line.match(/^>\s?(.*)$/);
+    if (quote) {
+      flushPara();
+      closeList();
+      out.push(`<blockquote>${inline(quote[1])}</blockquote>`);
+      continue;
+    }
     const h3 = line.match(/^###\s+(.*)$/);
     if (h3) {
       flushPara();
       closeList();
       out.push(`<h3>${inline(h3[1])}</h3>`);
+      continue;
+    }
+    // 表格：当前行是数据行、下一行是分隔行，才认定为表格
+    if (isTableRow(line) && i + 1 < lines.length && isTableSep(lines[i + 1].trim())) {
+      flushPara();
+      closeList();
+      const head = splitRow(line);
+      const aligns = splitRow(lines[i + 1].trim()).map((c) =>
+        /^:-+:$/.test(c) ? "center" : /-+:$/.test(c) ? "right" : "left"
+      );
+      i += 1; // 跳过 |---| 分隔行
+      const body = [];
+      while (i + 1 < lines.length && isTableRow(lines[i + 1].trim())) {
+        i += 1;
+        body.push(splitRow(lines[i].trim()));
+      }
+      const th = head
+        .map((c, k) => `<th style="text-align:${aligns[k] || "left"}">${inline(c)}</th>`)
+        .join("");
+      const trs = body
+        .map(
+          (row) =>
+            `<tr>${head
+              .map(
+                (_, k) =>
+                  `<td style="text-align:${aligns[k] || "left"}">${inline(row[k] || "")}</td>`
+              )
+              .join("")}</tr>`
+        )
+        .join("");
+      out.push(
+        `<div class="tbl-wrap"><table class="tbl"><thead><tr>${th}</tr></thead><tbody>${trs}</tbody></table></div>`
+      );
       continue;
     }
     const li = line.match(/^[-*]\s+(.*)$/);

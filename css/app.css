@@ -542,6 +542,16 @@ input[type="checkbox"] { accent-color: var(--accent-dim); }
 .rules ul, .rules ol { margin: 0 0 12px; padding-left: 20px; }
 .rules li { margin-bottom: 5px; }
 .rules strong { color: var(--text); font-weight: 500; }
+.rules blockquote {
+  margin: 14px 0; padding: 11px 15px;
+  border-left: 2px solid var(--line-strong);
+  background: var(--hover-1);
+  border-radius: 0 4px 4px 0;
+}
+.rules blockquote p { margin: 0; }
+.rules .tbl { font-size: 12.5px; }
+.rules .tbl th { font-size: 11px; }
+.rules .tbl-wrap { margin: 14px 0 18px; }
 
 .split { display: grid; grid-template-columns: 210px minmax(0, 1fr); gap: 30px; align-items: start; }
 .side-nav { position: sticky; top: 84px; display: flex; flex-direction: column; gap: 1px; }
