@@ -4,25 +4,6 @@ import { trackOf } from "./config.js";
 
 const isAward = (c) => c.award_key !== "participant";
 
-/** 印章：环文 + 五角星 + 年份，用 SVG 画，打印与屏幕完全一致 */
-function sealMark(year) {
-  return `
-  <div class="cert-seal cert-seal--svg" aria-hidden="true">
-    <svg viewBox="0 0 100 100" class="seal-svg">
-      <defs>
-        <path id="sealArc" d="M50,50 m-37,0 a37,37 0 1,1 74,0" />
-      </defs>
-      <circle cx="50" cy="50" r="47" class="seal-ring-line" />
-      <circle cx="50" cy="50" r="41.5" class="seal-ring-line thin" />
-      <text class="seal-arc">
-        <textPath href="#sealArc" startOffset="50%" text-anchor="middle">像素松 · 赛事认证 · PIXELSONG</textPath>
-      </text>
-      <polygon class="seal-star" points="50,38 52.9,45.9 61.4,46.3 54.8,51.6 57.1,59.7 50,55 42.9,59.7 45.2,51.6 38.6,46.3 47.1,45.9" />
-      ${year ? `<text x="50" y="73" text-anchor="middle" class="seal-year">${esc(year)}</text>` : ""}
-    </svg>
-  </div>`;
-}
-
 /** 赛事周期：2026.11.06 — 11.09 */
 function fmtPeriod(a) {
   const s = a && a.eventStart ? new Date(a.eventStart) : null;
@@ -40,7 +21,7 @@ function certDocument(c, issuer, meta = {}) {
   const award = !isJudge && isAward(c);
   const formal = award || isJudge;
   const year = (() => {
-    const d = new Date(c.issued_at);
+    const d = new Date(c.issued_at || c.created_at);
     return isNaN(d) ? "" : String(d.getFullYear());
   })();
   const micro = `${"PIXELSONG · 像素松 ".repeat(14)}${c.cert_code}`;
@@ -161,12 +142,11 @@ function certDocument(c, issuer, meta = {}) {
 
           <div class="cert-sign">
             <div class="cert-issuer">${esc(issuer.name)}</div>
-            ${sealMark(year)}
           </div>
 
           <div class="cert-field right">
             <span>颁发日期</span>
-            <b>${esc(fmtFull(c.issued_at).slice(0, 10))}</b>
+            <b>${esc(fmtFull(c.issued_at || c.created_at).slice(0, 10))}</b>
           </div>
         </div>
 
@@ -220,7 +200,7 @@ export async function certListView(el) {
                           : `《${esc(c.work_title)}》`
                       } · ${esc(c.cert_code)}</div>
                     </div>
-                    <span class="tag ${isAward(c) || c.award_key === "judge" ? "tag-teal" : ""}">${esc(fmtDate(c.issued_at))}</span>
+                    <span class="tag ${isAward(c) || c.award_key === "judge" ? "tag-teal" : ""}">${esc(fmtDate(c.issued_at || c.created_at))}</span>
                   </a>`
                 )
                 .join("")
@@ -338,7 +318,7 @@ export async function verifyView(el, path) {
                          <tr><td class="small muted">赛道</td><td>赛道 ${esc(cert.track)} · ${esc(trackOf(cert.track).name)}</td></tr>
                          <tr><td class="small muted">奖项</td><td>${esc(cert.award_name)}</td></tr>`
                   }
-                  <tr><td class="small muted">颁发时间</td><td class="mono tiny">${esc(fmtFull(cert.issued_at))}</td></tr>
+                  <tr><td class="small muted">颁发时间</td><td class="mono tiny">${esc(fmtFull(cert.issued_at || cert.created_at))}</td></tr>
                 </tbody></table></div>
                 <div class="row" style="margin-top:14px">
                   <a class="btn btn-sm" href="#/certificate/${encodeURIComponent(cert.cert_code)}">查看证书</a>

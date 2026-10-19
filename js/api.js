@@ -472,6 +472,7 @@ export async function issueCertificates(sub, holders, awardKey, awardName) {
       track: sub.track,
       award_key: awardKey,
       award_name: awardName,
+      issued_at: new Date().toISOString(),
       issued_by: state.me?.nickname || null,
     });
   }
@@ -515,6 +516,7 @@ export async function issueJudgeCertificate(judge, awardName = "评委") {
     award_name: awardName,
     judge_title: judge.title || null,
     judge_track: judge.tracks || null,
+    issued_at: new Date().toISOString(),
     issued_by: state.me?.nickname || null,
   };
   const out = unwrap(await db.from("certificates").insert([row]).select());

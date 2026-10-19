@@ -410,6 +410,8 @@ async function handleDb(req, res, ctx) {
       const row = Object.assign({}, v);
       row.owner_id = row.owner_id || ctx.uid;
       row.created_at = row.created_at || nowIso();
+      // 证书的颁发时间由数据库默认值提供，本地存储得自己补
+      if (table === "certificates") row.issued_at = row.issued_at || row.created_at;
       if (!canInsert(ctx, table, row)) {
         return sendJson(res, 403, { error: { code: "42501", message: "没有权限执行该操作" } });
       }
