@@ -24,7 +24,6 @@ function certDocument(c, issuer, meta = {}) {
     const d = new Date(c.issued_at || c.created_at);
     return isNaN(d) ? "" : String(d.getFullYear());
   })();
-  const micro = `${"PIXELSONG · 像素松 ".repeat(14)}${c.cert_code}`;
 
   return `
   <div class="cert-shell">
@@ -155,7 +154,6 @@ function certDocument(c, issuer, meta = {}) {
             issuer.co && issuer.co.length ? `　·　协办单位　${esc(issuer.co.join("　"))}` : ""
           }
         </p>
-        <div class="cert-microtext" aria-hidden="true">${esc(micro)}</div>
       </div>
     </div>
   </div>`;

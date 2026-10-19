@@ -1124,7 +1124,7 @@ a.org-card:hover .org-out { opacity: 1; }
   letter-spacing: 0.18em; text-indent: 0.18em; color: #3a352b;
 }
 .cert-page--formal .cert-note {
-  position: absolute; left: 2.8em; right: 2.8em; bottom: 1.05em; z-index: 2; margin: 0;
+  position: absolute; left: 2.8em; right: 2.8em; bottom: 0.9em; z-index: 2; margin: 0;
   font-size: 0.62em; color: #a89c82; letter-spacing: 0.04em; line-height: 1.45;
   text-align: center;
 }
@@ -1243,14 +1243,6 @@ a.org-card:hover .org-out { opacity: 1; }
 .cert-colophon {
   margin: 0.14em 0 0; text-align: center;
   font-size: 0.6em; letter-spacing: 0.14em; color: #a2977f; line-height: 1.5;
-}
-
-/* 微缩防伪文字 */
-.cert-microtext {
-  position: absolute; left: 2.8em; right: 2.8em; bottom: 0.32em; z-index: 2; margin: 0;
-  font-family: var(--mono); font-size: 0.38em; letter-spacing: 0.3em;
-  line-height: 1; color: #b3a88f; opacity: 0.85;
-  white-space: nowrap; overflow: hidden; text-align: center;
 }
 
 /* ---------- 评委团 ---------- */
