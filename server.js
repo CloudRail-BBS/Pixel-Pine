@@ -648,6 +648,7 @@ const server = http.createServer({ maxHeaderSize: 64 * 1024 }, async (req, res) 
       donate: {
         enabled: donateOk,
         url: donateOk ? donateUrl : "",
+        title: donateOk ? String(d.title || "").trim() : "",
         note: donateOk ? String(d.note || "").trim() : "",
       },
       // 空库：还没有任何账号，此时必须允许不带验证码创建首个主办方，

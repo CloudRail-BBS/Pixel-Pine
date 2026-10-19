@@ -999,8 +999,14 @@ function settingsTab(cfg, auth) {
         <input id="dn-url" value="${esc(dn.url || "")}" placeholder="https://afdian.com/a/yourname" />
         <div class="hint">只接受 https://afdian.com 或 afdian.net 下的地址，其他链接不会生效</div>
       </div>
-      <div class="field"><label>一句说明（可选）</label>
-        <input id="dn-note" value="${esc(dn.note || "")}" maxlength="60" placeholder="例：用于服务器与域名续费" />
+      <div class="grid grid-2">
+        <div class="field"><label>卡片标题</label>
+          <input id="dn-title" value="${esc(dn.title || "")}" maxlength="16" placeholder="支持像素松" />
+          <div class="hint">留空则用默认标题</div>
+        </div>
+        <div class="field"><label>一句说明</label>
+          <input id="dn-note" value="${esc(dn.note || "")}" maxlength="60" placeholder="例：用于服务器与域名续费" />
+        </div>
       </div>
     </div>
 
@@ -1380,6 +1386,7 @@ function wireAdmin(el, ctx) {
         donate: {
           enabled: checked(el, "#dn-enabled"),
           url: val(el, "#dn-url"),
+          title: val(el, "#dn-title"),
           note: val(el, "#dn-note"),
         },
       };

@@ -33,7 +33,7 @@ function donateBlock(cfg) {
         </svg>
       </span>
       <div style="min-width:0;flex:1">
-        <div class="donate-title">支持像素松</div>
+        <div class="donate-title">${esc(d.title || "支持像素松")}</div>
         <p class="donate-note">${esc(
           d.note || "活动不收取任何费用，服务器与域名由志愿者承担。"
         )}</p>
@@ -46,7 +46,6 @@ function donateBlock(cfg) {
 
 export async function homeView(el) {
   const a = state.activity || DEFAULT_ACTIVITY;
-  await loadAuthCfg(); // 首页底部可能展示捐助入口，开关改完要即时生效
   let teams = [];
   let subs = [];
   let notices = [];
@@ -174,9 +173,15 @@ export async function homeView(el) {
     </div>
 
     ${partnerWall(partners, "组织单位", "主办、协办与支持")}
-    ${donateBlock(AUTH_CFG)}
+    <div id="donate-slot"></div>
   `);
   bindShell();
+
+  // 捐助入口单独异步补：配置接口慢或挂掉都不能影响首页本身
+  loadAuthCfg().then(() => {
+    const slot = el.querySelector("#donate-slot");
+    if (slot) slot.innerHTML = donateBlock(AUTH_CFG);
+  });
 }
 
 /* ---------------------------- 组织单位 ---------------------------- */
@@ -309,15 +314,20 @@ let AUTH_CFG = null;
 
 // 每次进登录页都重新拉取：后台开关（验证码 / 人机验证 / CNKD）改完要立即生效
 async function loadAuthCfg() {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 4000);
   try {
     const r = await fetch("/api/auth/config", {
       headers: { accept: "application/json" },
       cache: "no-store",
+      signal: controller.signal,
     });
     if (!r.ok) throw new Error(String(r.status));
     AUTH_CFG = await r.json();
   } catch (_) {
-    AUTH_CFG = AUTH_CFG || { otp: true, captcha: { enabled: false } };
+    AUTH_CFG = AUTH_CFG || { otp: true, captcha: { enabled: false }, donate: { enabled: false } };
+  } finally {
+    clearTimeout(timer);
   }
   return AUTH_CFG;
 }

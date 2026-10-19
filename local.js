@@ -35,7 +35,7 @@ const DEFAULT_SETTINGS = {
   virustotal: { enabled: false, apiKey: "" },
   cnkd: { enabled: false, clientId: "", clientSecret: "", redirectUri: "" },
   // 捐助渠道：目前支持爱发电主页链接，仅在首页底部展示一个低调入口
-  donate: { enabled: false, url: "", note: "" },
+  donate: { enabled: false, url: "", title: "", note: "" },
 };
 
 let DATA_DIR = "";
@@ -916,6 +916,7 @@ function maskSettings() {
     donate: {
       enabled: Boolean(s.donate && s.donate.enabled),
       url: (s.donate && s.donate.url) || "",
+      title: (s.donate && s.donate.title) || "",
       note: (s.donate && s.donate.note) || "",
     },
   };
