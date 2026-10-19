@@ -487,16 +487,27 @@ export async function revokeCertificate(id) {
 
 /* ---------------- 评委证书 ---------------- */
 
-/** 证书表里的评委标识：没有账号的评委用 judge:<id> 占位，保证一人一张 */
-export const judgeCertOwner = (judge) => judge.owner_id || `judge:${judge.id}`;
+/**
+ * 评委证书的归属标识一律用 judge:<id>。
+ * 不能退回 judge.owner_id —— 那是「录入人」，主办方录入的所有评委都会拿到
+ * 同一个 owner_id，导致几个评委共用一张证书。
+ */
+export const judgeCertOwner = (judge) => `judge:${judge.id}`;
 
 export async function issueJudgeCertificate(judge, awardName = "评委") {
+  const owner = judgeCertOwner(judge);
+  // 一人一张：已发过就直接返回，避免重复点击生成多张
+  const exist = unwrap(
+    await db.from("certificates").select("*").eq("owner_id", owner).eq("award_key", "judge").maybeSingle()
+  );
+  if (exist) return exist;
+
   const row = {
     cert_code: makeCertCode("J"),
     submission_id: 0,
     team_id: 0,
     team_name: judge.org || null,
-    owner_id: judgeCertOwner(judge),
+    owner_id: owner,
     holder_name: judge.name || "未命名",
     work_title: judge.tracks || "评审工作",
     track: "judge",

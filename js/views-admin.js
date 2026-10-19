@@ -624,7 +624,7 @@ function judgesTab(judges, sigs, certs) {
   const rows = (judges || []).slice().sort((a, b) => (a.sort || 100) - (b.sort || 100));
   const signed = (sigs || []).filter((x) => x.doc_key === "judge");
   const judgeCerts = (certs || []).filter((c) => c.award_key === "judge");
-  const certOf = (j) => judgeCerts.find((c) => c.owner_id === (j.owner_id || `judge:${j.id}`));
+  const certOf = (j) => judgeCerts.find((c) => c.owner_id === `judge:${j.id}`);
   return `
     <div class="card block">
       <div class="card-head"><h2>评委团队</h2><span class="card-note">前台 #/judges</span></div>
