@@ -86,7 +86,9 @@ function bootErrorText(e) {
 async function boot() {
   const app = document.getElementById("app");
   try {
-    if (!window.WorkBuddyCloud) throw new Error("SDK 未加载，请刷新页面或检查静态资源是否完整");
+    if (!window.WorkBuddyCloud && !(window.__PS_CONFIG__ && window.__PS_CONFIG__.local)) {
+      throw new Error("SDK 未加载，请刷新页面或检查静态资源是否完整");
+    }
     // 会话、活动配置失败不应该把整站打成白屏，降级继续渲染
     await restoreAuth().catch((e) => console.warn("[boot] session", e));
     await loadActivity().catch((e) => console.warn("[boot] activity", e));

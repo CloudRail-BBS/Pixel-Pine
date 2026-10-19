@@ -269,7 +269,10 @@ export async function rulesView(el) {
 
 /* ---------------------------- 登录 ---------------------------- */
 
-let loginMode = "otp";
+const LOCAL_MODE = Boolean(
+  typeof window !== "undefined" && window.__PS_CONFIG__ && window.__PS_CONFIG__.local
+);
+let loginMode = LOCAL_MODE ? "pwd" : "otp";
 let resetCtx = null;
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -302,9 +305,13 @@ function pwdPane() {
     <div class="field">
       <label class="req">密码</label>
       <input type="password" id="f-password" placeholder="输入密码" autocomplete="current-password" />
-      <div class="hint"><a href="#" id="link-forgot">忘记密码，或首次设置密码</a></div>
+      ${
+        LOCAL_MODE
+          ? `<div class="hint">首次使用该邮箱会自动创建账号；首位注册者成为主办方。密码至少 6 位。</div>`
+          : `<div class="hint"><a href="#" id="link-forgot">忘记密码，或首次设置密码</a></div>`
+      }
     </div>
-    <button class="btn btn-primary btn-block" id="btn-pwd" type="button">登录</button>`;
+    <button class="btn btn-primary btn-block" id="btn-pwd" type="button">${LOCAL_MODE ? "登录 / 注册" : "登录"}</button>`;
 }
 
 function resetPane() {
@@ -350,19 +357,26 @@ export async function loginView(el) {
           resetCtx || loginMode === "reset"
             ? resetPane()
             : `
-          <div class="auth-tabs">
-            <button class="${loginMode === "otp" ? "on" : ""}" data-mode="otp" type="button">验证码登录</button>
-            <button class="${loginMode === "pwd" ? "on" : ""}" data-mode="pwd" type="button">密码登录</button>
-          </div>
-          ${loginMode === "otp" ? otpPane() : pwdPane()}
-          <div class="row" style="margin:20px 0 16px;gap:12px">
-            <span style="flex:1;height:1px;background:var(--line)"></span>
-            <span class="tiny dim">或</span>
-            <span style="flex:1;height:1px;background:var(--line)"></span>
-          </div>
-          <button class="btn btn-block" id="btn-cnkd" type="button">CNKD 一证通行</button>
-          <button class="btn btn-block" id="btn-wechat" type="button" style="margin-top:9px">微信扫码登录</button>
-          <p class="tiny dim" style="margin-top:14px">CNKD 一证通行用于核验你在 CNKD 生态的身份并绑定到本站账号；本站作品与报名数据仍由站内账号承载。微信登录需在已发布域名下使用。</p>`
+          ${
+            LOCAL_MODE
+              ? `<div class="auth-tabs"><button class="on" type="button">邮箱密码登录</button></div>
+                 ${pwdPane()}
+                 <p class="tiny dim" style="margin-top:14px">本实例为独立部署：账号、数据与文件都保存在这台服务器上，不连接任何外部服务。</p>`
+              : `<div class="auth-tabs">
+                   <button class="${loginMode === "otp" ? "on" : ""}" data-mode="otp" type="button">验证码登录</button>
+                   <button class="${loginMode === "pwd" ? "on" : ""}" data-mode="pwd" type="button">密码登录</button>
+                 </div>
+                 ${loginMode === "otp" ? otpPane() : pwdPane()}
+                 <div class="row" style="margin:20px 0 16px;gap:12px">
+                   <span style="flex:1;height:1px;background:var(--line)"></span>
+                   <span class="tiny dim">或</span>
+                   <span style="flex:1;height:1px;background:var(--line)"></span>
+                 </div>
+                 <button class="btn btn-block" id="btn-cnkd" type="button">CNKD 一证通行</button>
+                 <button class="btn btn-block" id="btn-wechat" type="button" style="margin-top:9px">微信扫码登录</button>
+                 <p class="tiny dim" style="margin-top:14px">CNKD 一证通行用于核验你在 CNKD 生态的身份并绑定到本站账号；本站作品与报名数据仍由站内账号承载。微信登录需在已发布域名下使用。</p>`
+          }
+          `
         }
       </div>
       <p class="tiny dim center" style="margin-top:16px">登录即表示同意活动规则与隐私说明</p>
@@ -490,12 +504,14 @@ function wireLogin(el) {
       if (e.key === "Enter") btn.click();
     };
 
-    forgot.onclick = (e) => {
-      e.preventDefault();
-      resetCtx = null;
-      loginMode = "reset";
-      loginView(el);
-    };
+    if (forgot) {
+      forgot.onclick = (e) => {
+        e.preventDefault();
+        resetCtx = null;
+        loginMode = "reset";
+        loginView(el);
+      };
+    }
   }
 
   /* ---- 重置 / 设置密码 ---- */

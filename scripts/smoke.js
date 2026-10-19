@@ -55,6 +55,14 @@ const get = (p) => fetch(BASE + p, { redirect: "manual" });
     return { ok: local && !cdn, detail: local ? (cdn ? "仍引用 CDN" : "仅本地资源") : "未引用本地 SDK" };
   });
 
+  await probe("数据面模式", async () => {
+    const r = await get("/api/health");
+    const j = await r.json();
+    const mode = (j.dataPlane || {}).mode || "?";
+    const ok = mode === "local" || mode === "proxy" || mode === "direct" || mode === "auto";
+    return { ok, detail: mode };
+  });
+
   await probe("健康检查", async () => {
     const r = await get("/api/health");
     const j = await r.json();

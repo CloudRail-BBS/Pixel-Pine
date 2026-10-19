@@ -8,6 +8,8 @@ services:
       - "${HOST_PORT:-3000}:3000"
     environment:
       PORT: 3000
+      # local = 账号/数据/文件都在本容器；cloud = 连远端云服务
+      PS_MODE: ${PS_MODE:-local}
       # 数据面同源代理的目标。留空（PS_UPSTREAM=）则改为直连 PS_ENDPOINT。
       # 默认指向已发布的云服务，因此容器起来就能登录、读写数据，无需改代码。
       PS_UPSTREAM: ${PS_UPSTREAM-https://pixelsong.app.workbuddy.host}
@@ -24,8 +26,13 @@ services:
     # dns:
     #   - 223.5.5.5
     #   - 119.29.29.29
+    volumes:
+      - pixelsong-data:/app/data
     logging:
       driver: json-file
       options:
         max-size: "10m"
         max-file: "3"
+
+volumes:
+  pixelsong-data:

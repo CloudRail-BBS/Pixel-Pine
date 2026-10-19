@@ -4,6 +4,7 @@ const http = require("http");
 const fs = require("fs");
 const path = require("path");
 const crypto = require("crypto");
+const local = require("./local.js");
 
 const ROOT = __dirname;
 
@@ -49,6 +50,9 @@ const vtCache = new Map();
  * "TypeError: Failed to fetch"。把 /.cloud/** 反代到发布的 endpoint 后，
  * 浏览器看到的是同源请求，不再有预检，也不依赖对方返回 CORS。
  */
+const LOCAL_MODE = String(process.env.PS_MODE || "").toLowerCase() === "local";
+const DATA_DIR = process.env.PS_DATA_DIR || path.join(ROOT, "data");
+
 const DEFAULT_ENDPOINT = "https://pixelsong.app.workbuddy.host";
 const PS_UPSTREAM = String(process.env.PS_UPSTREAM || "").trim().replace(/\/+$/, "");
 const PS_ENDPOINT = String(process.env.PS_ENDPOINT || "").trim().replace(/\/+$/, "");
@@ -67,6 +71,7 @@ const PS_TLS_INSECURE = /^(1|true|yes)$/i.test(String(process.env.PS_TLS_INSECUR
  *  - 两者都没配：在官方域名上直连，在其他域名（IP、localhost、自有域名）上自动代理
  */
 function upstreamFor(req) {
+  if (LOCAL_MODE) return "";
   if (PS_UPSTREAM) return PS_UPSTREAM;
   if (PS_ENDPOINT) return "";
   const fwd = String(req.headers["x-forwarded-host"] || "").split(",")[0].trim();
@@ -77,6 +82,7 @@ function upstreamFor(req) {
 
 /** 下发给浏览器的运行配置；代理模式下省略 endpoint，SDK 自动用 location.origin */
 function bootConfig(req) {
+  if (LOCAL_MODE) return { local: true, publishableKey: "" };
   const cfg = { publishableKey: PS_PUBLISHABLE_KEY };
   if (upstreamFor(req)) {
     cfg.proxy = true;
@@ -536,8 +542,9 @@ const server = http.createServer({ maxHeaderSize: 64 * 1024 }, async (req, res) 
         envFile: fs.existsSync(path.join(ROOT, ".env")),
       },
       dataPlane: {
-        mode: PS_UPSTREAM ? "proxy" : PS_ENDPOINT ? "direct" : "auto",
-        upstream: PS_UPSTREAM || PS_ENDPOINT || DEFAULT_ENDPOINT,
+        mode: LOCAL_MODE ? "local" : PS_UPSTREAM ? "proxy" : PS_ENDPOINT ? "direct" : "auto",
+        upstream: LOCAL_MODE ? null : PS_UPSTREAM || PS_ENDPOINT || DEFAULT_ENDPOINT,
+        dataDir: LOCAL_MODE ? DATA_DIR : undefined,
       },
     });
   }
@@ -711,6 +718,11 @@ const server = http.createServer({ maxHeaderSize: 64 * 1024 }, async (req, res) 
     return sendJson(res, 200, { ok: true, profile: rec.profile });
   }
 
+  if (LOCAL_MODE && url.pathname.startsWith("/.cloud/local/")) {
+    await local.handle(req, res, url);
+    return;
+  }
+
   if (url.pathname.startsWith("/.cloud/")) {
     const upstream = upstreamFor(req);
     if (!upstream) return sendJson(res, 404, { error: "proxy_disabled" });
@@ -724,6 +736,10 @@ const server = http.createServer({ maxHeaderSize: 64 * 1024 }, async (req, res) 
   return serveStatic(req, res);
 });
 
+if (LOCAL_MODE) {
+  local.init(DATA_DIR, path.join(ROOT, "scripts", "seed.json"));
+}
+
 const REQUIRED_FILES = ["index.html", "css/app.css", "js/main.js", "js/core.js"];
 const missingFiles = REQUIRED_FILES.filter((f) => !fs.existsSync(path.join(ROOT, f)));
 if (missingFiles.length) {
@@ -736,7 +752,9 @@ server.listen(PORT, HOST, () => {
   console.log(`[pixelsong] geetest ${GEETEST_ID && GEETEST_KEY ? "enabled" : "disabled"}`);
   console.log(`[pixelsong] cnkd    ${CNKD_CLIENT_ID ? (CNKD_CLIENT_SECRET ? "confidential" : "public") : "disabled"}`);
   console.log(
-    PS_UPSTREAM
+    LOCAL_MODE
+      ? `[pixelsong] data    local → ${DATA_DIR}`
+      : PS_UPSTREAM
       ? `[pixelsong] data    proxy → ${PS_UPSTREAM}`
       : PS_ENDPOINT
       ? `[pixelsong] data    direct → ${PS_ENDPOINT}`

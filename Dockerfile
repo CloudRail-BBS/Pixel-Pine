@@ -7,6 +7,7 @@ ENV NODE_ENV=production
 # 零依赖：只拷运行时需要的文件，不装任何 npm 包
 COPY package.json ./
 COPY server.js ./
+COPY local.js ./
 COPY index.html ./
 COPY css ./css
 COPY js ./js
@@ -15,6 +16,7 @@ COPY scripts ./scripts
 
 # 非 root 运行
 RUN addgroup -S app && adduser -S app -G app \
+ && mkdir -p /app/data \
  && chown -R app:app /app
 USER app
 

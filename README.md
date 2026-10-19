@@ -61,7 +61,9 @@ npm start
 
 访问 http://localhost:3000 。
 
-**不需要任何配置。** 服务会自动判断：在官方域名上直连数据面，在 localhost、IP 或自有域名上自动启用同源代理（见下节）。
+**默认就是本地模式**：账号、数据、文件都写到 `./data`，不连任何外部服务。首次用邮箱 + 密码登录即注册，第一个账号是主办方。
+
+想用云端模式：`PS_MODE=cloud`（官方站用）。
 
 ## Docker 部署
 
@@ -69,7 +71,7 @@ npm start
 docker compose up -d --build
 ```
 
-起来就能用，**不需要先配任何环境变量**：容器默认启用数据面同源代理，IP 或域名访问都能登录。
+起来就能用，**不需要先配任何环境变量**：默认 local 模式，数据落在命名卷 `pixelsong-data`（挂到 `/app/data`）。
 
 镜像基于 `node:22-alpine`，非 root 用户运行，内置健康检查。默认映射 `3000` 端口，可用 `HOST_PORT` 覆盖。
 
@@ -77,7 +79,8 @@ docker compose up -d --build
 
 ```bash
 docker build -t pixelsong .
-docker run -d --name pixelsong -p 3000:3000 --env-file .env pixelsong
+docker run -d --name pixelsong -p 3000:3000 \
+  -v pixelsong-data:/app/data pixelsong
 ```
 
 查看状态：
@@ -106,7 +109,7 @@ server {
 }
 ```
 
-`X-Forwarded-Proto` 必须传，否则 CNKD 回调地址会算成 `http://`。
+`X-Forwarded-Proto` 用于把登录 Cookie 标记为 Secure；HTTPS 下请照写。
 
 ## 环境变量
 
@@ -114,6 +117,8 @@ server {
 
 | 变量 | 必填 | 说明 |
 |---|---|---|
+| `PS_MODE` | 否 | `local`（默认，本机自足）或 `cloud` |
+| `PS_DATA_DIR` | 否 | 本地模式数据目录，默认 `/app/data` |
 | `PORT` | 否 | 监听端口，默认 3000 |
 | `GEETEST_CAPTCHA_ID` | 否 | 极验 Captcha ID |
 | `GEETEST_CAPTCHA_KEY` | 否 | 极验 Captcha Key（仅服务端） |
@@ -124,78 +129,52 @@ server {
 
 未配置时对应功能自动降级：极验跳过验证、CNKD 按钮置灰，登录仍可用。`/api/health` 会如实报告状态。
 
-## 关于后端
+## 两种运行模式
 
-本仓库**不包含数据库与账号系统**。页面通过 `/.cloud/**` 访问托管云服务（PostgreSQL + Auth + 存储），由行级安全策略（RLS）隔离数据。
+| 模式 | 账号与数据 | 依赖 | 适用 |
+|---|---|---|---|
+| **local**（默认） | 全部在本机：`data/db.json` + `data/files` | 无 | 自己服务器部署 |
+| **cloud** | 托管云服务（WorkBuddy Cloud） | 外部网络 | 官方线上站 |
 
-### 为什么开箱就能跑
+`PS_MODE=local` 时，邮箱、密码、队伍、作品、评分、证书全部写在容器的一个数据卷里，**不发起任何外部请求**。没有邮件服务，首次用邮箱 + 密码登录即注册，第一个账号自动成为主办方。
 
-服务端内置**数据面同源代理**：浏览器把请求发到当前域名下的 `/.cloud/**`，Node 收到后原样转发给已发布的数据面。
-
-```
-浏览器 → http://你的服务器:3000/.cloud/**  →  Node 转发  →  https://pixelsong.app.workbuddy.host/.cloud/**
-```
-
-浏览器看到的是同源请求，不做预检，也不要求对方返回 CORS 头，所以用 IP、端口或任意域名访问都能登录和读写。
-
-判断顺序：
-
-| 环境变量 | 行为 |
-|---|---|
-| `PS_UPSTREAM=https://…` | 全部走代理到该地址 |
-| `PS_ENDPOINT=https://…` | 直连该地址，不代理（要求对方允许你的来源） |
-| 都不配 | 官方域名直连；其他域名自动代理到官方数据面 |
-
-当前走向可以直接查：`curl http://localhost:3000/api/health`，看 `dataPlane` 字段。
-
-### 容器连不上数据面怎么办
-
-浏览器能打开主站、容器却报 `502 upstream_unreachable`，说明**服务器出网**有问题（DNS 污染、TLS 拦截、防火墙），不是应用代码。
-
-打开一个地址就能定位：
-
-```
-http://你的服务器:3000/api/diag
-```
-
-它返回 DNS 解析结果、连接耗时、HTTP 状态与具体错误码：
-
-| 返回 | 含义 | 处理 |
-|---|---|---|
-| `"ok": true` | 容器能连上数据面 | 502 是偶发，重试 |
-| `"code": "ENOTFOUND"` | DNS 解析失败 | 换 DNS，或用 `PS_UPSTREAM` 填可达 IP + `PS_UPSTREAM_HOST` 填域名 |
-| `"code": "CERT_..."` / `UNABLE_TO_VERIFY_LEAF_SIGNATURE` | TLS 被中间设备替换 | 配 `NODE_EXTRA_CA_CERTS` 指向企业根证书；内网可临时 `PS_TLS_INSECURE=1` |
-| `"code": "ETIMEDOUT"` / `ECONNREFUSED` | 出网被拦 | 放行该域名 443，或让服务器走代理 |
-| `dns` 里是 `198.18.x.x` | 被代理软件 fake-ip 接管 | 容器内没有该代理，改用真实 DNS |
-
-### 默认与主站共用数据
-
-不配 `PS_UPSTREAM` 时，自托管站点连的是**已发布的那套数据库**：你在自建站点注册的账号在主站也能登录，作品、队伍、评分都是同一份。
-
-想让数据完全独立，需要自己建一套云服务应用：
-
-1. 新建应用（数据库 + 存储 + 登录），拿到新的 endpoint 与 publishableKey
-2. 在它的 SQL 控制台依次执行 `scripts/schema.sql` 与 `scripts/seed.sql`
-3. 配 `PS_UPSTREAM` 指向新应用，`PS_PUBLISHABLE_KEY` 换成新 key
+### 自己部署（默认 local）
 
 ```bash
-scripts/schema.sql    # 14 张表 + RLS + 权限函数
-scripts/seed.sql      # 活动配置 + 规则正文 + 活动介绍 + 主办单位
+git clone https://github.com/CloudRail-BBS/Pixel-Pine.git
+cd Pixel-Pine
+docker compose up -d --build
 ```
 
-第一次登录后还需要提一次管理员（角色有列级保护，客户端改不了）：
+打开 `http://服务器IP:3000`，用任意邮箱 + 密码登录即可开始。数据在命名卷 `pixelsong-data` 里：
 
-```sql
-UPDATE profiles SET role = 'admin' WHERE owner_id = '<你的 UID>';
+```bash
+docker volume inspect pixelpine_pixelsong-data     # 看挂载点
+docker run --rm -v pixelpine_pixelsong-data:/d -v $PWD:/b alpine tar czf /b/backup.tgz -C /d .
 ```
 
-UID 在「我的」页面能看到。
+备份就是拷这个卷；换机器时还原回去，账号与作品都在。
 
-### 以前为什么会报 `TypeError: Failed to fetch`
+### 想用云端模式
 
-数据面的跨源预检返回 **403，且不带任何 `Access-Control-Allow-Origin` 头**。浏览器因此判定预检失败，任何带自定义头（如 `x-wb-webapp-access-key`）的请求都发不出去，前端只能拿到 `Failed to fetch`。
+`PS_MODE=cloud`，并按需配 `PS_UPSTREAM`（同源代理）或 `PS_ENDPOINT`（直连）。这一模式只用于官方站，自建一般不需要。
 
-同源代理绕开了这条路径，不需要对方改 CORS，也不需要在浏览器里做任何设置。
+---
+
+## 本地模式的数据结构
+
+`data/db.json` 是一个 JSON 文件，按表存放：`profiles / users / teams / team_members / submissions / submission_versions / reviews / announcements / activity / appeals / signatures / documents / partners / judges / certificates`。写入采用「先写临时文件再 rename」，避免断电留下半截文件。
+
+`data/files/` 存作品包，路径规则与云端一致：`users/<uid>/...` 只有本人可读，`shared/<uid>/...` 登录后可读。下载地址带 HMAC 签名与过期时间。
+
+服务端逐表校验权限（等价于云端的 RLS）：参赛者只看得到自己的草稿，评委只看得到分配给自己的作品，主办方可以看全部。
+
+### 本地模式的限制
+
+- **没有邮箱验证码**：登录页只保留邮箱 + 密码。
+- **没有第三方登录**：CNKD、微信入口在本地模式不显示。
+- **单进程**：不要用 `--scale` 起多个副本共享同一个数据卷，JSON 写入没有跨进程锁。
+- **备份靠卷**：容器删了数据还在卷里，但卷也删了就没了。
 
 ### 作品包存储
 

@@ -1,6 +1,10 @@
 import { PUBLIC_CONFIG, DEFAULT_ACTIVITY } from "./config.js";
+import { createLocalCloud } from "./local-cloud.js";
 
-export const cloud = window.WorkBuddyCloud.createWorkBuddyCloud(PUBLIC_CONFIG);
+// 本地模式用内置后端，云模式用官方 SDK；两者接口形状一致
+export const cloud = PUBLIC_CONFIG.local
+  ? createLocalCloud(PUBLIC_CONFIG)
+  : window.WorkBuddyCloud.createWorkBuddyCloud(PUBLIC_CONFIG);
 
 export const state = {
   session: null,

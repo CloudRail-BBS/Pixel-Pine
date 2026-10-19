@@ -9,3 +9,5 @@ Thumbs.db
 # 编辑器
 .vscode/
 .idea/
+# 本地模式数据（账号、数据库、作品包）
+data/
