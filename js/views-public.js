@@ -274,7 +274,7 @@ const LOCAL_MODE = Boolean(
 );
 // 后台未维护「登录页说明」时的兜底文案
 const DEFAULT_LOGIN_NOTE = LOCAL_MODE
-  ? "本实例为独立部署：账号、数据与文件都保存在这台服务器上。首次使用邮箱登录会自动创建账号，首个账号成为主办方。"
+  ? "本实例为独立部署：账号、数据与作品文件都保存在这台服务器上。注册需要邮箱验证码，空库时的首个账号免验证码并成为主办方。"
   : "CNKD 一证通行用于核验你在 CNKD 生态的身份并绑定到本站账号；本站作品与报名数据仍由站内账号承载。";
 let loginMode = "otp";
 let AUTH_CFG = null;
@@ -318,7 +318,7 @@ function otpPane() {
       <div class="hint">新账号需要填写昵称，会出现在队伍、作品与证书上。</div>
     </div>
     <button class="btn btn-primary btn-block" id="btn-otp" type="button">登录 / 注册</button>
-    <p class="tiny dim" style="margin-top:12px">首次登录自动创建账号，无需密码。想改用密码登录，请先走「忘记密码」设置一次。</p>`;
+    <p class="tiny dim" style="margin-top:12px">新邮箱首次验证码登录会创建账号，需同时填写昵称。想改用密码登录，请先走「忘记密码」设置一次。</p>`;
 }
 
 function pwdPane() {
@@ -339,15 +339,35 @@ function pwdPane() {
     <button class="btn btn-primary btn-block" id="btn-pwd" type="button">登录</button>`;
 }
 
-/** 注册：昵称必填，作为账号的展示名写入 profiles */
+/** 注册：邮箱验证码 + 昵称 + 密码，昵称必填并作为账号展示名写入 profiles */
 function registerPane() {
+  // 空库时没有 SMTP 可用，首个账号（主办方）免验证码
+  const firstRun = LOCAL_MODE && Boolean(AUTH_CFG && AUTH_CFG.firstRun);
   return `
     <h2 style="margin-bottom:4px">创建账号</h2>
-    <p class="small muted" style="margin-bottom:18px">填写邮箱、昵称与密码。昵称会展示在队伍、作品与证书上。</p>
+    <p class="small muted" style="margin-bottom:18px">${
+      firstRun
+        ? "当前是全新部署，注册的第一个账号将成为主办方。"
+        : "先验证邮箱归属，再设置昵称与密码。昵称会展示在队伍、作品与证书上。"
+    }</p>
     <div class="field">
       <label class="req">邮箱</label>
       <input type="email" id="f-email-r" placeholder="you@example.com" autocomplete="email" />
     </div>
+    ${
+      LOCAL_MODE && !firstRun
+        ? `<div class="field">
+             <label class="req">邮箱验证码</label>
+             <div class="row">
+               <input type="text" id="f-code-r" placeholder="6 位验证码" class="grow" inputmode="numeric" autocomplete="one-time-code" />
+               <button class="btn" id="btn-send-r" type="button">获取验证码</button>
+             </div>
+             <div class="hint">发送到上面的邮箱，10 分钟内有效</div>
+           </div>`
+        : firstRun
+        ? `<div class="hint" style="margin:-4px 0 16px">首个账号无需验证码；配置 SMTP 之后，后续注册都需要邮箱验证。</div>`
+        : ""
+    }
     <div class="field">
       <label class="req">昵称</label>
       <input type="text" id="f-name-r" maxlength="20" placeholder="展示给其他参赛者的昵称" autocomplete="nickname" />
@@ -546,6 +566,7 @@ function wireLogin(el) {
   if (toRegister) {
     toRegister.onclick = (e) => {
       e.preventDefault();
+      pendingOtp = null; // 换页清空，避免沿用上一轮验证码
       loginMode = "register";
       loginView(el);
     };
@@ -647,31 +668,69 @@ function wireLogin(el) {
     }
   }
 
-  /* ---- 注册（昵称必填） ---- */
+  /* ---- 注册（邮箱验证码 + 昵称 + 密码） ---- */
   if (loginMode === "register") {
     const emailEl = el.querySelector("#f-email-r");
+    const codeEl = el.querySelector("#f-code-r");
     const nameEl = el.querySelector("#f-name-r");
     const pwdEl = el.querySelector("#f-password-r");
+    const sendBtn = el.querySelector("#btn-send-r");
     const btn = el.querySelector("#btn-register");
+
+    if (sendBtn) {
+      sendBtn.onclick = async () => {
+        const email = emailEl.value.trim();
+        if (!EMAIL_RE.test(email)) return toast("请输入正确的邮箱地址", "err");
+        pendingOtp = await sendCode(sendBtn, email);
+        if (pendingOtp && pendingOtp.isExistingUser) {
+          toast("该邮箱已注册，请直接登录", "err");
+        }
+      };
+    }
 
     btn.onclick = async () => {
       const email = emailEl.value.trim();
+      const code = codeEl ? codeEl.value.trim() : "";
       const name = nameEl.value.trim();
       const password = pwdEl.value;
+
       if (!EMAIL_RE.test(email)) return toast("请输入正确的邮箱地址", "err");
+      const needCode = LOCAL_MODE && !(AUTH_CFG && AUTH_CFG.firstRun);
+      if (needCode) {
+        if (!pendingOtp || pendingOtp.email !== email) {
+          return toast("请先获取该邮箱的验证码", "err");
+        }
+        if (!code) return toast("请输入邮箱验证码", "err");
+      }
       if ([...name].length < 2) return toast("请填写昵称，至少 2 个字", "err");
       if ([...name].length > 20) return toast("昵称不能超过 20 个字", "err");
       if (!pwdOk(password)) return toast("密码至少 8 位，且同时包含字母和数字", "err");
 
       busy(btn, true, "注册中…");
       try {
-        const res = await cloud.auth.signInWithPassword({ email, password, name });
-        if (res.error) throw res.error;
-        // 本地模式会返回 isNew；云端模式没有这个字段，一律按新账号继续
-        if (res.data && res.data.isNew === false) {
-          toast("该邮箱已注册，请直接登录", "err");
-          busy(btn, false);
-          return;
+        if (needCode) {
+          const res = await cloud.auth.register({
+            email,
+            password,
+            name,
+            code,
+            verificationId: pendingOtp.verificationId,
+          });
+          if (res.error) throw res.error;
+          pendingOtp = null;
+        } else if (LOCAL_MODE) {
+          // 首个账号：无需验证码，直接创建
+          const res = await cloud.auth.register({ email, password, name, code: "", verificationId: "" });
+          if (res.error) throw res.error;
+        } else {
+          const res = await cloud.auth.signInWithPassword({ email, password, name });
+          if (res.error) throw res.error;
+          // 云端模式拿不到 isNew，退回用昵称补写兜底
+          if (res.data && res.data.isNew === false) {
+            toast("该邮箱已注册，请直接登录", "err");
+            busy(btn, false);
+            return;
+          }
         }
         await afterLogin("注册成功");
         syncNickname(name);
@@ -681,7 +740,7 @@ function wireLogin(el) {
       }
     };
 
-    const fields = [emailEl, nameEl, pwdEl];
+    const fields = codeEl ? [emailEl, codeEl, nameEl, pwdEl] : [emailEl, nameEl, pwdEl];
     fields.forEach((input, i) => {
       input.onkeydown = (e) => {
         if (e.key !== "Enter") return;

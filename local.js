@@ -723,10 +723,66 @@ async function verifyOtp(req, res) {
   });
 }
 
+/**
+ * 注册：邮箱验证码 + 昵称 + 密码，一次完成。
+ * 与「验证码登录」分开，是因为注册必须先证明邮箱归属，不能靠登录顺手建号。
+ */
+async function handleRegister(req, res) {
+  const body = await readJson(req);
+  const email = String(body.email || "").trim().toLowerCase();
+  const password = String(body.password || "");
+  const name = Array.from(String(body.name || "").trim()).slice(0, 20).join("");
+  const verificationId = String(body.verificationId || "");
+  const code = String(body.code || "").trim();
+
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    return sendJson(res, 400, { error: { message: "邮箱格式不正确" } });
+  }
+  if (Array.from(name).length < 2) {
+    return sendJson(res, 400, { error: { message: "请填写昵称，至少 2 个字" } });
+  }
+  if (password.length < 8 || !/[A-Za-z]/.test(password) || !/\d/.test(password)) {
+    return sendJson(res, 400, { error: { message: "密码至少 8 位，且同时包含字母和数字" } });
+  }
+  if (rows("users").some((u) => u.email === email)) {
+    return sendJson(res, 409, { error: { message: "该邮箱已注册，请直接登录" } });
+  }
+
+  // 空库时第一位注册者即主办方，此时还没有 SMTP 可用，跳过验证码避免死锁
+  const firstRun = rows("profiles").length === 0;
+  if (!firstRun) {
+    const rec = (db.otp || []).find((o) => o.id === verificationId && o.email === email);
+    if (!rec || rec.used) return sendJson(res, 400, { error: { message: "验证码已失效，请重新获取" } });
+    if (new Date(rec.exp).getTime() < Date.now()) {
+      return sendJson(res, 400, { error: { message: "验证码已过期，请重新获取" } });
+    }
+    if (rec.tries >= 5) return sendJson(res, 429, { error: { message: "尝试次数过多，请重新获取" } });
+    rec.tries += 1;
+    const expect = crypto.createHash("sha256").update(`${code}:${email}:${SECRET}`).digest("hex");
+    if (!safeEqual(expect, rec.hash)) {
+      save(true);
+      return sendJson(res, 400, { error: { message: "验证码错误" } });
+    }
+    rec.used = true;
+  }
+
+  const created = ensureUser(email, name);
+  created.user.salt = crypto.randomBytes(16).toString("hex");
+  created.user.password_hash = scrypt(password, created.user.salt);
+  createSession(res, created.uid, req);
+  save(true);
+  return sendJson(res, 200, {
+    data: {
+      user: { id: created.uid, email },
+      role: created.profile.role || "participant",
+      isNew: true,
+    },
+  });
+}
+
 /* ------------------------------ 认证 ------------------------------ */
 
 const loginHits = new Map();
-
 function tooMany(ip) {
   const now = Date.now();
   const rec = loginHits.get(ip);
@@ -743,6 +799,7 @@ async function handleAuth(req, res, url) {
 
   if (url.pathname.endsWith("/auth/otp/send") && req.method === "POST") return sendOtp(req, res);
   if (url.pathname.endsWith("/auth/otp/verify") && req.method === "POST") return verifyOtp(req, res);
+  if (url.pathname.endsWith("/auth/register") && req.method === "POST") return handleRegister(req, res);
 
   if (url.pathname.endsWith("/auth/session") && req.method === "GET") {
     const u = currentUser(req);
@@ -754,7 +811,6 @@ async function handleAuth(req, res, url) {
     const body = await readJson(req);
     const email = String(body.email || "").trim().toLowerCase();
     const password = String(body.password || "");
-    const name = Array.from(String(body.name || "").trim()).slice(0, 20).join("");
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
       return sendJson(res, 400, { error: { message: "邮箱格式不正确" } });
     }
@@ -768,15 +824,8 @@ async function handleAuth(req, res, url) {
       user.password_hash = scrypt(password, user.salt);
       save();
     } else if (!user) {
-      // 注册必须带昵称：不再用邮箱前缀兜底，避免出现一堆「abc123」这样的账号
-      if (Array.from(name).length < 2) {
-        return sendJson(res, 400, { error: { message: "请先注册并填写昵称" } });
-      }
-      const created = ensureUser(email, name);
-      user = created.user;
-      isNew = created.created;
-      user.salt = crypto.randomBytes(16).toString("hex");
-      user.password_hash = scrypt(password, user.salt);
+      // 注册必须走 /auth/register 并验证邮箱，这里不再顺手建号
+      return sendJson(res, 400, { error: { message: "该邮箱尚未注册，请先注册" } });
     } else if (!safeEqual(scrypt(password, user.salt), user.password_hash)) {
       return sendJson(res, 401, { error: { message: "邮箱或密码错误" } });
     }

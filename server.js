@@ -639,6 +639,9 @@ const server = http.createServer({ maxHeaderSize: 64 * 1024 }, async (req, res) 
       otp: LOCAL_MODE ? smtpOn : true,
       captcha: { enabled: g.enabled, provider: "geetest", captchaId: g.id || null },
       cnkd: { enabled: c.enabled },
+      // 空库：还没有任何账号，此时必须允许不带验证码创建首个主办方，
+      // 否则「配 SMTP 需要管理员、注册需要 SMTP」会死锁
+      firstRun: LOCAL_MODE && local.rows("profiles").length === 0,
     });
   }
 

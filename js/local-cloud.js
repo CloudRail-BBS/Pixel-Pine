@@ -170,6 +170,11 @@ export function createLocalCloud(config) {
       async verifyOtp({ email, verificationId, token, name }) {
         return post("/.cloud/local/auth/otp/verify", { email, verificationId, code: token, name });
       },
+
+      /** 注册：邮箱验证码 + 昵称 + 密码，一次成型 */
+      async register({ email, password, name, code, verificationId }) {
+        return post("/.cloud/local/auth/register", { email, password, name, code, verificationId });
+      },
       async resetPasswordForEmail() {
         return unavailable("邮件重置密码");
       },
