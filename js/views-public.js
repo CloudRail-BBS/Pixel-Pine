@@ -6,7 +6,8 @@ import {
   TRACKS, trackOf, DIMENSIONS, DEFAULT_ACTIVITY, PARTNER_ROLES, JUDGE_DOC, judgePlainText,
 } from "./config.js";
 import {
-  allSubmissions, listAnnouncements, rankSubmissions, allReviews, trackCounts, awardPlan,
+  allSubmissions, listAnnouncements, rankSubmissions, rankByPublicScores, publicScores,
+  allReviews, trackCounts, awardPlan,
   getDocument, listPartners, listSponsors, publicWorks, publicWork, getIntro,
   listJudgesPublic, getJudgeAck, signJudgeCode,
 } from "./api.js";
@@ -155,7 +156,7 @@ export async function homeView(el) {
       </div>
       <div class="col" style="gap:14px">
         <div class="card">
-          <div class="card-head"><h2>怎么评</h2><span class="card-note">六个维度加权</span></div>
+          <div class="card-head"><h2>怎么评</h2><span class="card-note">${DIMENSIONS.length} 个维度加权</span></div>
           ${DIMENSIONS.map((d) => `
             <div class="row-between" style="margin-bottom:9px">
               <span class="small">${esc(d.name)}</span>
@@ -1059,16 +1060,24 @@ function wireLogin(el) {
 
 export async function resultsView(el) {
   let subs = [];
-  let reviews = [];
   try {
     subs = (await allSubmissions()).filter((s) => s.status === "public");
   } catch (e) {
     subs = [];
   }
+
+  // 访客读不到 reviews 表，分数改由只读聚合接口提供；
+  // 云端部署没有这个接口时，退回原始评分（只有评委/主办方能读到）。
+  let ranked = [];
   try {
-    reviews = await allReviews();
-  } catch (_) {}
-  const ranked = rankSubmissions(subs, reviews);
+    ranked = rankByPublicScores(subs, await publicScores());
+  } catch (_) {
+    let reviews = [];
+    try {
+      reviews = await allReviews();
+    } catch (_) {}
+    ranked = rankSubmissions(subs, reviews);
+  }
   const groups = TRACKS.map((t) => ({ ...t, rows: ranked.filter((r) => r.sub.track === t.code) }));
 
   el.innerHTML = shell(`

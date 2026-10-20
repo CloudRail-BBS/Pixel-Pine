@@ -250,6 +250,12 @@ export async function myReviews() {
 }
 
 export async function saveReview(reviewId, scores, comment, submit) {
+  const current = unwrap(
+    await db.from("reviews").select("id,status").eq("id", reviewId).maybeSingle()
+  );
+  if (current && (current.status === "submitted" || current.status === "locked")) {
+    throw new Error("评分已提交，如需修改请联系主办方退回");
+  }
   const total = weightedTotal(scores);
   const rows = unwrap(
     await db.from("reviews").update({
@@ -259,6 +265,14 @@ export async function saveReview(reviewId, scores, comment, submit) {
     }).eq("id", reviewId).select()
   );
   if (!rows || !rows.length) throw new Error("保存失败：该评分不属于你");
+}
+
+/** 主办方退回评分，让评委可以重新打分 */
+export async function reopenReview(reviewId) {
+  const rows = unwrap(
+    await db.from("reviews").update({ status: "draft", updated_at: new Date().toISOString() }).eq("id", reviewId).select()
+  );
+  if (!rows || !rows.length) throw new Error("退回失败：没有权限");
 }
 
 export function weightedTotal(scores) {
@@ -297,6 +311,35 @@ export function rankSubmissions(subs, reviews) {
       avg: Math.round(avg * 10) / 10,
       qualified: avg >= 60,
       trimmed,
+    };
+  }).sort((a, b) => b.avg - a.avg);
+}
+
+/**
+ * 公开结果页用的分数：服务端只回聚合值（均分 / 评委数 / 是否去极值），
+ * 避免把评语和单条打分暴露给访客。
+ */
+export async function publicScores() {
+  const r = await fetch("/api/results/scores", {
+    headers: { accept: "application/json" },
+    cache: "no-store",
+  });
+  if (!r.ok) throw new Error("scores_unavailable");
+  const j = await r.json().catch(() => ({}));
+  if (!j.ok) throw new Error(j.error || "scores_unavailable");
+  return j.scores || {};
+}
+
+/** 用聚合分排序；结构保持和 rankSubmissions 一致，页面无需分叉 */
+export function rankByPublicScores(subs, scores) {
+  return subs.map((s) => {
+    const a = scores[s.id] || scores[String(s.id)] || {};
+    return {
+      sub: s,
+      judgeCount: Number(a.judgeCount) || 0,
+      avg: Number(a.avg) || 0,
+      qualified: Boolean(a.qualified),
+      trimmed: Boolean(a.trimmed),
     };
   }).sort((a, b) => b.avg - a.avg);
 }

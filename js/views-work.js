@@ -1033,8 +1033,8 @@ export async function judgeView(el) {
   let subs = [];
   try { subs = await allSubmissions(); } catch (_) {}
   const byId = new Map(subs.map((s) => [s.id, s]));
-  const pending = reviews.filter((r) => r.status !== "submitted");
-  const done = reviews.filter((r) => r.status === "submitted");
+  const pending = reviews.filter((r) => r.status !== "submitted" && r.status !== "locked");
+  const done = reviews.filter((r) => r.status === "submitted" || r.status === "locked");
 
   el.innerHTML = shell(`
     <div class="block-head"><h2>评审</h2><span class="card-note">${done.length} / ${reviews.length} 已完成</span></div>
@@ -1047,12 +1047,14 @@ export async function judgeView(el) {
         return `<div class="card">
           <div class="row-between" style="margin-bottom:8px">
             <span class="tag ${s.track === "A" || s.track === "B" ? "tag-blue" : "tag-amber"}">赛道 ${esc(s.track)}</span>
-            <span class="${r.status === "submitted" ? "tag tag-teal" : "tag tag-amber"}">${r.status === "submitted" ? "已提交 " + r.total + " 分" : "待评分"}</span>
+            <span class="${r.status === "submitted" || r.status === "locked" ? "tag tag-teal" : "tag tag-amber"}">${
+              r.status === "submitted" || r.status === "locked" ? "已提交 " + r.total + " 分" : "待评分"
+            }</span>
           </div>
           <div class="strong" style="font-size:15px;margin-bottom:4px">${esc(s.title)}</div>
           <p class="small muted" style="margin-bottom:12px">${esc(s.summary || "")}</p>
-          <button class="btn btn-sm ${r.status === "submitted" ? "" : "btn-primary"}" data-review="${r.id}">
-            ${r.status === "submitted" ? "查看 / 修改" : "开始评分"}
+          <button class="btn btn-sm ${r.status === "submitted" || r.status === "locked" ? "" : "btn-primary"}" data-review="${r.id}">
+            ${r.status === "submitted" || r.status === "locked" ? "查看评分" : "开始评分"}
           </button>
         </div>`;
       }).join("")}
@@ -1072,6 +1074,7 @@ function openScoreModal(reviewId, reviews, byId, refresh) {
   const l = s?.links || {};
   const sc = r.scores || {};
   const rubric = PRESENT_RUBRIC[s.track] || "";
+  const locked = r.status === "submitted" || r.status === "locked";
 
   const m = modal(`
     <div class="row-between" style="margin-bottom:4px">
@@ -1101,22 +1104,27 @@ function openScoreModal(reviewId, reviews, byId, refresh) {
         <label class="row-between" style="display:flex">
           <span>${esc(dim.name)} <span class="dim">· ${dim.weight}%</span></span>
         </label>
-        <input type="number" min="0" max="100" step="1" data-dim="${dim.key}" value="${sc[dim.key] ?? ""}" placeholder="0–100" />
+        <input type="number" min="0" max="100" step="1" data-dim="${dim.key}" value="${sc[dim.key] ?? ""}" placeholder="0–100" ${locked ? "disabled" : ""} />
         <div class="hint">${esc(dim.key === "present" && rubric ? rubric : dim.hint)}</div>
       </div>`).join("")}
 
     <div class="field">
       <label>评语</label>
-      <textarea id="rv-comment" placeholder="写清依据，尤其是有分歧的维度">${esc(r.comment || "")}</textarea>
+      <textarea id="rv-comment" placeholder="写清依据，尤其是有分歧的维度" ${locked ? "disabled" : ""}>${esc(r.comment || "")}</textarea>
     </div>
     <div class="row-between" style="margin-top:6px">
       <span class="small muted">加权总分</span>
       <span class="mono strong" id="rv-total" style="font-size:18px">${r.total || 0}</span>
     </div>
     <div class="row" style="justify-content:flex-end;gap:8px;margin-top:16px">
-      <button class="btn btn-ghost" data-x="cancel">取消</button>
-      <button class="btn" data-x="draft">存草稿</button>
-      <button class="btn btn-primary" data-x="submit">提交评分</button>
+      ${
+        locked
+          ? `<span class="tiny dim" style="margin-right:auto">评分已提交，如需修改请联系主办方退回。</span>
+             <button class="btn" data-x="close">关闭</button>`
+          : `<button class="btn btn-ghost" data-x="cancel">取消</button>
+             <button class="btn" data-x="draft">存草稿</button>
+             <button class="btn btn-primary" data-x="submit">提交评分</button>`
+      }
     </div>
   `);
 
@@ -1152,6 +1160,11 @@ function openScoreModal(reviewId, reviews, byId, refresh) {
     };
   }
 
+  if (locked) {
+    m.host.querySelector('[data-x="close"]').onclick = () => m.close();
+    return;
+  }
+
   m.host.querySelector('[data-x="cancel"]').onclick = () => m.close();
   m.host.querySelector('[data-x="draft"]').onclick = async (e) => {
     busy(e.currentTarget, true, "保存中…");
@@ -1164,7 +1177,7 @@ function openScoreModal(reviewId, reviews, byId, refresh) {
   };
   m.host.querySelector('[data-x="submit"]').onclick = async (e) => {
     const scores = readScores();
-    if (Object.keys(scores).length < DIMENSIONS.length) return toast("请为全部 6 个维度打分", "err");
+    if (Object.keys(scores).length < DIMENSIONS.length) return toast(`请为全部 ${DIMENSIONS.length} 个维度打分`, "err");
     if (!(await confirmBox("提交评分", "提交后评分锁定，如需修改请联系主办方。确定吗？", "提交"))) return;
     busy(e.currentTarget, true, "提交中…");
     try {

@@ -7,6 +7,7 @@ import {
   listTeams, allSubmissions, allReviews, listJudges, listAnnouncements, createAnnouncement,
   deleteAnnouncement, setTeamStatus, setCompatibility, assignReviews, publishResults,
   rankSubmissions, trackCounts, awardPlan, saveActivity, listAllAppeals, replyAppeal,
+  reopenReview,
   setUserRole, listVersions, listDocuments, saveDocument,
   listCertificates, issueCertificates, revokeCertificate, issueJudgeCertificate,
   listPartners, savePartner, deletePartner,
@@ -347,7 +348,7 @@ function reviewTab(reviews, profiles, subs) {
     <div class="card">
       <div class="card-head"><h2>已提交评分</h2><span class="card-note">按作品汇总</span></div>
       ${reviews.filter((r) => r.status === "submitted").length ? `<div class="tbl-wrap"><table class="tbl">
-        <thead><tr><th>作品</th><th>评委</th><th>总分</th><th>提交时间</th></tr></thead>
+        <thead><tr><th>作品</th><th>评委</th><th>总分</th><th>提交时间</th><th></th></tr></thead>
         <tbody>${reviews.filter((r) => r.status === "submitted").map((r) => {
           const s = subById.get(r.submission_id);
           return `<tr>
@@ -355,6 +356,10 @@ function reviewTab(reviews, profiles, subs) {
             <td class="small">${esc(r.judge_name || "—")}</td>
             <td class="mono strong">${r.total || 0}</td>
             <td class="mono tiny dim">${esc(fmtDate(r.updated_at))}</td>
+            <td class="row" style="gap:6px;justify-content:flex-end">
+              <button class="btn btn-sm" data-view-review="${r.id}">查看</button>
+              <button class="btn btn-sm btn-ghost" data-reopen="${r.id}">退回</button>
+            </td>
           </tr>`;
         }).join("")}</tbody>
       </table></div>` : '<p class="small dim" style="margin:0">暂无</p>'}
@@ -362,6 +367,34 @@ function reviewTab(reviews, profiles, subs) {
 }
 
 /* ------------------------------ 结果 ------------------------------ */
+
+function openReviewDetail(reviewId, ctx) {
+  const r = (ctx.reviews || []).find((x) => x.id === reviewId);
+  if (!r) return;
+  const s = (ctx.subs || []).find((x) => x.id === r.submission_id);
+  const scores = r.scores || {};
+  const m = modal(`
+    <div class="row-between" style="margin-bottom:4px">
+      <h3 style="margin:0">${esc(s?.title || "#" + r.submission_id)}</h3>
+      <span class="tag tag-teal">${r.total || 0} 分</span>
+    </div>
+    <p class="small muted" style="margin-bottom:14px">${esc(r.judge_name || "评委")} · ${esc(fmtDate(r.updated_at))}</p>
+    <div class="tbl-wrap"><table class="tbl">
+      <thead><tr><th>维度</th><th>权重</th><th>得分</th></tr></thead>
+      <tbody>${DIMENSIONS.map((d) => `<tr>
+        <td>${esc(d.name)}</td>
+        <td class="mono tiny dim">${d.weight}%</td>
+        <td class="mono strong">${scores[d.key] ?? "—"}</td>
+      </tr>`).join("")}</tbody>
+    </table></div>
+    <div class="field" style="margin-top:14px"><label>评语</label>
+      <p class="small muted" style="white-space:pre-wrap;margin:0">${esc(r.comment || "（未填写）")}</p></div>
+    <div class="row" style="justify-content:flex-end;margin-top:16px">
+      <button class="btn" data-x="close">关闭</button>
+    </div>
+  `);
+  m.host.querySelector('[data-x="close"]').onclick = () => m.close();
+}
 
 function resultsTab(subs, reviews) {
   const ranked = rankSubmissions(subs.filter((s) => s.status !== "draft"), reviews);
@@ -1432,6 +1465,31 @@ function wireAdmin(el, ctx) {
       } catch (err) { toast(errMsg(err), "err"); busy(e.currentTarget, false); }
     };
   }
+
+  el.querySelectorAll("[data-view-review]").forEach((b) => {
+    b.onclick = () => openReviewDetail(Number(b.dataset.viewReview), ctx);
+  });
+
+  el.querySelectorAll("[data-reopen]").forEach((b) => {
+    b.onclick = async () => {
+      const r = (ctx.reviews || []).find((x) => x.id === Number(b.dataset.reopen));
+      if (
+        !(await confirmBox(
+          "退回评分",
+          `将让「${esc(r?.judge_name || "评委")}」重新打分，当前分数保留但不再计入排名。`,
+          "退回"
+        ))
+      )
+        return;
+      try {
+        await reopenReview(Number(b.dataset.reopen));
+        toast("已退回，评委可重新提交", "ok");
+        adminView(el, "#/admin/review");
+      } catch (e) {
+        toast(errMsg(e), "err");
+      }
+    };
+  });
 
   const pubBtn = el.querySelector("#btn-publish");
   if (pubBtn) {

@@ -1096,6 +1096,42 @@ const server = http.createServer({ maxHeaderSize: 64 * 1024 }, async (req, res) 
     }
   }
 
+  /**
+   * 公开分数：只返回已公示作品的聚合分，不下发评语、评委名与单条打分。
+   * 直接读 reviews 表对访客是 401，结果页因此拿不到分，这里单独开一个只读口子。
+   */
+  if (url.pathname === "/api/results/scores" && req.method === "GET") {
+    if (!LOCAL_MODE) return sendJson(res, 404, { ok: false, error: "not_supported" });
+    const publicIds = new Set(
+      local.rows("submissions").filter((s) => s.status === "public").map((s) => Number(s.id))
+    );
+    const bySub = new Map();
+    for (const r of local.rows("reviews")) {
+      if (r.status !== "submitted" && r.status !== "locked") continue;
+      const id = Number(r.submission_id);
+      if (!publicIds.has(id)) continue;
+      const total = Number(r.total);
+      if (!Number.isFinite(total) || total <= 0) continue;
+      if (!bySub.has(id)) bySub.set(id, []);
+      bySub.get(id).push(total);
+    }
+    const scores = {};
+    for (const [id, list] of bySub) {
+      const sorted = list.slice().sort((a, b) => a - b);
+      const trimmed = sorted.length >= 5;
+      const used = trimmed ? sorted.slice(1, -1) : sorted;
+      const avg = used.reduce((a, b) => a + b, 0) / used.length;
+      scores[id] = {
+        judgeCount: sorted.length,
+        avg: Math.round(avg * 10) / 10,
+        qualified: avg >= 60,
+        trimmed,
+      };
+    }
+    res.setHeader("cache-control", "no-store");
+    return sendJson(res, 200, { ok: true, scores });
+  }
+
   if (LOCAL_MODE && url.pathname.startsWith("/.cloud/local/")) {
     await local.handle(req, res, url);
     return;
