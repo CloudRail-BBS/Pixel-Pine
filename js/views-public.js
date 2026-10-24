@@ -83,102 +83,160 @@ export async function homeView(el) {
     { key: "road", label: "公示与颁奖", time: a.roadshowAt, desc: "结果公示 24 小时，无异议后颁奖" },
   ];
 
+  const cdMs = cd.over ? 0 : cd.ms;
+  const cdD = Math.floor(cdMs / 86400000);
+  const cdH = Math.floor((cdMs % 86400000) / 3600000);
+  const cdM = Math.floor((cdMs % 3600000) / 60000);
+  const pad2 = (n) => String(n).padStart(2, "0");
+  const maxWeight = Math.max(...DIMENSIONS.map((d) => d.weight));
+
   const stats = [
-    { label: "赛道", value: TRACKS.length, unit: "条" },
-    { label: "已注册队伍", value: state.session ? teams.length : "—", unit: state.session ? "支" : "" },
-    { label: "已提交作品", value: subs.length, unit: "件" },
-    { label: "距提交截止", value: state.session || true ? cd.text : "—", unit: "", small: true },
+    { label: "Tracks", value: TRACKS.length, unit: "条" },
+    { label: "Teams", value: state.session ? teams.length : "—", unit: state.session ? "支" : "" },
+    { label: "Entries", value: subs.length, unit: "件" },
+    { label: "Deadline", value: cd.text, unit: "", small: true },
   ];
 
+  const trackBlurb = (code) =>
+    code === "A"
+      ? "机制创新、兼容性、稳定性、前置依赖"
+      : code === "B"
+      ? "建筑、关卡、剧情、命令与游玩体验"
+      : code === "C"
+      ? "单位与机制设计、平衡性、联机兼容"
+      : "布局、触发器与脚本、对抗或合作体验";
+
   el.innerHTML = shell(`
-    <section class="hero">
-      <div class="hero-eyebrow">MINECRAFT × RUSTED WARFARE</div>
-      <h1>像素松 · 限时创作</h1>
-      <p class="hero-sub">${esc(intro?.first || "全程线上，72 小时，做出一个能装进游戏、别人下载后能跑起来的模组或地图。一队 3–5 人，按赛道独立评审，不设路演。")}</p>
-      <div class="row row-wrap" style="margin-top:18px;gap:8px">
-        <span class="tag tag-teal">本期主题 · ${esc(a.theme)}</span>
-        <span class="tag">${esc(a.venue || "")}</span>
-        <span class="tag">提交截止 ${esc(fmtDate(a.submitDeadline))}</span>
+    <section class="hero-ed">
+      <div class="hero-copy">
+        <div class="eyebrow">MINECRAFT × RUSTED WARFARE · 2026</div>
+        <h1 class="hero-title">像素松<span class="hero-mark"> / </span><br /><em>限时创作</em></h1>
+        <p class="hero-sub">${esc(intro?.first || "全程线上，72 小时，做出一个能装进游戏、别人下载后能跑起来的模组或地图。一队 3–5 人，按赛道独立评审，不设路演。")}</p>
+        <div class="hero-cta">
+          ${
+            state.session
+              ? `<a class="btn btn-primary" href="#/work">提交作品</a><a class="btn" href="#/team">我的队伍</a>`
+              : `<a class="btn btn-primary" href="#/login">登录 / 报名</a><a class="btn" href="#/rules">先看规则</a>`
+          }
+          <a class="hero-link mono" href="#/works">浏览参赛作品 <span>→</span></a>
+        </div>
+        <div class="hero-meta mono">
+          <span>THEME · ${esc(a.theme)}</span><i></i>
+          <span>${esc(a.venue || "全程线上")}</span><i></i>
+          <span>DEADLINE · ${esc(fmtDate(a.submitDeadline))}</span>
+        </div>
       </div>
-      <div class="row row-wrap" style="margin-top:20px;gap:10px">
-        ${state.session
-          ? `<a class="btn btn-primary" href="#/work">提交作品</a><a class="btn" href="#/team">我的队伍</a>`
-          : `<a class="btn btn-primary" href="#/login">登录 / 报名</a><a class="btn" href="#/rules">先看规则</a>`}
+
+      <div class="hero-side">
+        <div class="terminal">
+          <div class="terminal-bar"><b>pixelsong.config</b><span class="dots"><i></i><i></i><i></i></span></div>
+          <pre><code><span class="cm">// 72h build sprint</span>
+<span class="kw">const</span> run = {
+  theme: <span class="st">"${esc(a.theme)}"</span>,
+  tracks: <span class="nu">${TRACKS.length}</span>,
+  team: <span class="st">"3–5"</span>,
+  window: <span class="st">"72h"</span>,
+  mode: <span class="st">"online"</span>,
+};</code></pre>
+          <div class="terminal-foot mono">STATUS · ${cd.over ? "CLOSED" : "OPEN FOR SUBMISSION"}</div>
+        </div>
+        <div class="countdown">
+          <div class="cd-label mono">${cd.over ? "提交已截止" : "距提交截止"}</div>
+          <div class="cd-digits">
+            <b>${pad2(cdD)}</b><span>D</span>
+            <b>${pad2(cdH)}</b><span>H</span>
+            <b>${pad2(cdM)}</b><span>M</span>
+          </div>
+        </div>
       </div>
     </section>
 
-    <div class="grid grid-4 block">
-      ${stats.map((s) => `
-        <div class="stat">
-          <div class="stat-label">${esc(s.label)}</div>
-          <div class="stat-value" style="${s.small ? "font-size:17px" : ""}">${esc(s.value)}<small>${esc(s.unit)}</small></div>
+    <div class="stat-strip">
+      ${stats.map((s, i) => `
+        <div class="stat-cell">
+          <div class="stat-k mono">0${i + 1} / ${esc(s.label)}</div>
+          <div class="stat-v" style="${s.small ? "font-size:20px;letter-spacing:-.6px" : ""}">${esc(s.value)}<small>${esc(s.unit)}</small></div>
         </div>`).join("")}
     </div>
 
-    <div class="block">
-      <div class="block-head"><h2>四条赛道</h2><span class="card-note">按游戏 + 作品类型分赛道，跨赛道不直接比较</span></div>
-      <div class="grid grid-4">
-        ${TRACKS.map((t) => `
-          <div class="card track-card track-${t.code}">
-            <div class="row-between" style="margin-bottom:8px">
-              <span class="tag ${t.side === "mc" ? "tag-blue" : "tag-amber"}">赛道 ${t.code}</span>
-              <span class="card-note">${esc(t.game)}</span>
-            </div>
-            <div class="strong" style="font-size:15px;margin-bottom:6px">${esc(t.name)}</div>
-            <p class="small muted" style="margin:0">${
-              t.code === "A" ? "机制创新、兼容性、稳定性、前置依赖" :
-              t.code === "B" ? "建筑、关卡、剧情、命令与游玩体验" :
-              t.code === "C" ? "单位与机制设计、平衡性、联机兼容" :
-              "布局、触发器与脚本、对抗或合作体验"
-            }</p>
-          </div>`).join("")}
+    <section class="sec">
+      <div class="sec-head">
+        <span class="sec-no mono">01</span>
+        <div class="sec-title"><h2>四条赛道</h2><p>按游戏 + 作品类型分赛道，跨赛道不直接比较</p></div>
       </div>
-    </div>
+      <div class="track-grid">
+        ${TRACKS.map((t) => `
+          <article class="track-panel tc-${t.code}">
+            <div class="track-top">
+              <span class="track-code">${t.code}</span>
+              <span class="track-game mono">${t.side === "mc" ? "MINECRAFT" : "RUSTED WARFARE"}</span>
+            </div>
+            <h3>${esc(t.name)}</h3>
+            <p>${esc(trackBlurb(t.code))}</p>
+            <div class="track-foot mono">TRACK ${t.code} <span>↗</span></div>
+          </article>`).join("")}
+      </div>
+    </section>
 
-    <div class="grid grid-2 block">
-      <div class="card">
-        <div class="card-head"><h2>赛程</h2><span class="card-note">当前阶段</span></div>
-        <div class="timeline">
+    <section class="sec">
+      <div class="sec-head">
+        <span class="sec-no mono">02</span>
+        <div class="sec-title"><h2>赛程</h2><p>从报名到颁奖，五个节点</p></div>
+      </div>
+      <div class="split">
+        <div class="steps">
           ${phases.map((p, i) => {
             const t = timeLeft(p.time);
             const passed = t.over;
             const next = !passed && (i === 0 || timeLeft(phases[i - 1].time).over);
-            return `<div class="tl-item ${passed ? "done" : next ? "active" : ""}">
-              <div class="tl-rail"><span class="tl-dot"></span>${i < phases.length - 1 ? '<span class="tl-line"></span>' : ""}</div>
-              <div class="tl-body">
-                <div class="tl-title ${passed ? "muted" : "strong"}">${esc(p.label)}</div>
-                <div class="tl-time">${esc(fmtFull(p.time))}</div>
-                <div class="small dim" style="margin-top:2px">${esc(p.desc)}</div>
+            return `<div class="step ${passed ? "done" : next ? "now" : ""}">
+              <span class="step-no mono">${pad2(i + 1)}</span>
+              <div class="step-body">
+                <div class="step-head">
+                  <h3>${esc(p.label)}</h3>
+                  <span class="step-state mono">${passed ? "DONE" : next ? "NOW" : ""}</span>
+                </div>
+                <div class="step-time">${esc(fmtFull(p.time))}</div>
+                <p>${esc(p.desc)}</p>
               </div>
             </div>`;
           }).join("")}
         </div>
-      </div>
-      <div class="col" style="gap:14px">
-        <div class="card">
-          <div class="card-head"><h2>怎么评</h2><span class="card-note">${DIMENSIONS.length} 个维度加权</span></div>
+        <aside class="score-panel">
+          <div class="score-head">
+            <span class="mono">RUBRIC</span>
+            <b>${DIMENSIONS.length} 维加权</b>
+          </div>
           ${DIMENSIONS.map((d) => `
-            <div class="row-between" style="margin-bottom:9px">
-              <span class="small">${esc(d.name)}</span>
-              <span class="mono small muted">${d.weight}%</span>
-            </div>
-            <div class="bar" style="margin-bottom:11px"><i style="width:${d.weight * 3.4}%"></i></div>`).join("")}
-          <p class="tiny dim" style="margin:0">总分低于 60 分的作品不授予等级奖；同分按可运行性、创意、玩法依次排序。</p>
-        </div>
-        <div class="card">
-          <div class="card-head"><h2>公告</h2><a class="card-note" href="#/notices">全部</a></div>
-          ${notices.length ? notices.map((n) => `
-            <div class="notice-item">
-              <div class="notice-title">${n.pinned ? '<span class="tag tag-amber" style="margin-right:6px">置顶</span>' : ""}${esc(n.title)}</div>
-              <div class="notice-meta">${esc(ago(n.created_at))}</div>
-            </div>`).join("") : '<div class="empty" style="padding:22px">暂无公告</div>'}
-        </div>
+            <div class="score-row">
+              <span class="score-name">${esc(d.name)}</span>
+              <span class="score-bar"><i style="width:${Math.round((d.weight / maxWeight) * 100)}%"></i></span>
+              <span class="score-w mono">${d.weight}%</span>
+            </div>`).join("")}
+          <p class="score-note">总分低于 60 分的作品不授予等级奖；同分按可运行性、创意、玩法依次排序。</p>
+        </aside>
       </div>
-    </div>
+    </section>
+
+    <section class="sec">
+      <div class="sec-head">
+        <span class="sec-no mono">03</span>
+        <div class="sec-title"><h2>公告</h2><p>赛程变更与重要通知</p></div>
+        <a class="sec-link mono" href="#/notices">ALL →</a>
+      </div>
+      ${notices.length
+        ? `<div class="notice-list">${notices.map((n) => `
+            <a class="notice-row" href="#/notices">
+              <span class="notice-title">${n.pinned ? '<span class="tag tag-amber" style="margin-right:8px">置顶</span>' : ""}${esc(n.title)}</span>
+              <span class="notice-meta mono">${esc(ago(n.created_at))}</span>
+            </a>`).join("")}</div>`
+        : '<div class="empty" style="padding:22px">暂无公告</div>'}
+    </section>
 
     ${partnerWall(partners, "组织单位", "主办、协办与支持")}
     <div id="donate-slot"></div>
-  `);
+`);
+
   bindShell();
 
   // 捐助入口单独异步补：配置接口慢或挂掉都不能影响首页本身
@@ -231,8 +289,11 @@ function partnerWall(list, title, note) {
   if (rest.length) groups.push({ key: "other", name: "其他单位", note: "", items: rest });
 
   return `
-    <div class="block" id="orgs">
-      <div class="block-head"><h2>${esc(title)}</h2><span class="card-note">${esc(note || "")}</span></div>
+    <section class="sec" id="orgs">
+      <div class="sec-head">
+        <span class="sec-no mono">04</span>
+        <div class="sec-title"><h2>${esc(title)}</h2><p>${esc(note || "")}</p></div>
+      </div>
       <div class="org-wall">
         ${groups
           .map(
@@ -247,7 +308,7 @@ function partnerWall(list, title, note) {
           )
           .join("")}
       </div>
-    </div>`;
+    </section>`;
 }
 
 /* ---------------------------- 赞助者 ---------------------------- */
