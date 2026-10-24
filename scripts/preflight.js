@@ -30,7 +30,7 @@ check("Node 版本 ≥ 18", () => {
 }, "升级 Node 到 18 以上（需要全局 fetch）");
 
 check("必要文件齐全", () => {
-  const need = ["index.html", "favicon.ico", "server.js", "local.js", "mailer.js", "package.json", "css/app.css", "js/main.js", "js/core.js", "js/api.js", "js/local-cloud.js", "scripts/seed.json"];
+  const need = ["index.html", "favicon.ico", "server.js", "local.js", "mailer.js", "package.json", "css/app.css", "js/main.js", "js/core.js", "js/api.js", "js/local-cloud.js", "js/seo.js", "seo-server.js", "assets/og-cover.png", "scripts/seed.json"];
   const miss = need.filter((f) => !fs.existsSync(path.join(ROOT, f)));
   return { ok: miss.length === 0, detail: miss.length ? "缺少 " + miss.join(", ") : `${need.length} 个文件` };
 });

@@ -1,5 +1,6 @@
 import { PUBLIC_CONFIG, DEFAULT_ACTIVITY } from "./config.js";
 import { createLocalCloud } from "./local-cloud.js";
+import { defaultSeo } from "./seo.js";
 
 // 本地模式用内置后端，云模式用官方 SDK；两者接口形状一致
 export const cloud = PUBLIC_CONFIG.local
@@ -229,16 +230,24 @@ export function invalidate(...keys) {
   }
 }
 export function navigate(path, replace = false) {
+  const clean = path === "/home" ? "/" : path;
+  const current = location.pathname + location.search;
   if (replace) {
-    location.replace("#" + path);
-  } else if (location.hash.slice(1) === path) {
+    history.replaceState(null, "", clean);
+  } else if (current === clean) {
     render();
+    return;
   } else {
-    location.hash = path;
+    history.pushState(null, "", clean);
   }
+  render();
 }
 export function currentPath() {
-  return location.hash.replace(/^#/, "") || "/home";
+  const hash = location.hash.replace(/^#/, "");
+  if (hash) return hash;
+  const p = location.pathname + location.search;
+  if (!p || p === "/" || p === "/index.html") return "/home";
+  return p;
 }
 
 let barTimer = null;
@@ -296,6 +305,7 @@ export async function render() {
   const base = path.split("?")[0];
   const changed = state.route !== base;
   state.route = base;
+  defaultSeo(base, state.activity || DEFAULT_ACTIVITY);
   const handler = resolveRoute(base);
   const el = document.getElementById("app");
   barStart();
@@ -352,7 +362,7 @@ export function shell(content, opts = {}) {
   <header class="top">
     <div class="top-inner">
       <a class="brand" href="#/home">
-        <img class="brand-logo" src="assets/logo.svg" alt="" width="22" height="22" />
+        <img class="brand-logo" src="/assets/logo.svg" alt="" width="22" height="22" />
         像素松
       </a>
       <nav class="main">

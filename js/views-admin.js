@@ -1206,7 +1206,7 @@ function settingsTab(cfg, auth) {
       <div class="hint" style="margin-top:12px;line-height:1.9">
         极验控制台里这样填：<br />
         · 新增业务场景时，<b>客户端类型必须选 Web / Wap</b>，否则拿到的 ID 在网页上用不了<br />
-        · 「接入页面地址」填 <span class="mono">${esc(siteOrigin)}/#/login</span><br />
+        · 「接入页面地址」填 <span class="mono">${esc(siteOrigin)}/login</span><br />
         · 有「域名白名单」的话，填 <span class="mono">${esc(siteHost)}</span>（不带协议和端口）<br />
         · 用 <span class="mono">IP:端口</span> 访问通常不被极验接受，建议先绑域名；只想先跑通可暂时关掉本项
       </div>

@@ -44,7 +44,7 @@ export async function meView(el) {
   const githubOn = Boolean(authCfg && authCfg.github && authCfg.github.enabled);
 
   // OAuth 回来带的提示
-  const flags = new URLSearchParams(location.hash.split("?")[1] || "");
+  const flags = new URLSearchParams(location.search.slice(1) || location.hash.split("?")[1] || "");
   const welcome = flags.get("welcome");
   const linked = flags.get("linked");
   const loginFlag = flags.get("login");
@@ -59,7 +59,7 @@ export async function meView(el) {
     } else {
       toast(oauthError, "err");
     }
-    history.replaceState(null, "", "#/me");
+    history.replaceState(null, "", "/me");
   }
 
   const roleText = me?.role === "admin" ? "主办方" : me?.role === "judge" ? "评委" : "参赛者";

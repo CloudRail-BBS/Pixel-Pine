@@ -68,6 +68,37 @@ const get = (p) => fetch(BASE + p, { redirect: "manual" });
     return { ok: local && !cdn, detail: local ? (cdn ? "仍引用 CDN" : "仅本地资源") : "未引用本地 SDK" };
   });
 
+  await probe("robots.txt", async () => {
+    const r = await get("/robots.txt");
+    const text = r.status === 200 ? await r.text() : "";
+    const ok = r.status === 200 && text.includes("Sitemap:") && text.includes("Disallow: /admin");
+    return { ok, detail: ok ? "已声明 Sitemap 与私有路径" : `${r.status} 内容异常` };
+  });
+
+  await probe("sitemap.xml", async () => {
+    const r = await get("/sitemap.xml");
+    const text = r.status === 200 ? await r.text() : "";
+    const n = (text.match(/<url>/g) || []).length;
+    const ok = r.status === 200 && text.includes("<urlset") && n > 3;
+    return { ok, detail: `${n} 条 URL` };
+  });
+
+  await probe("干净路径直达", async () => {
+    const r = await get("/rules");
+    const text = r.status === 200 ? await r.text() : "";
+    const ok = r.status === 200 && text.includes("活动规则") && text.includes('rel="canonical"');
+    return { ok, detail: `${r.status}${ok ? "" : " 缺少 meta"}` };
+  });
+
+  await probe("爬虫快照", async () => {
+    const r = await fetch(BASE + "/rules", {
+      headers: { "user-agent": "Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)" },
+    });
+    const text = r.status === 200 ? await r.text() : "";
+    const ok = r.status === 200 && text.includes("<h1>活动规则</h1>") && text.includes("赛制与时间");
+    return { ok, detail: ok ? "服务端已渲染正文" : `${r.status} 仍是空壳` };
+  });
+
   await probe("数据面模式", async () => {
     const r = await get("/api/health");
     const j = await r.json();

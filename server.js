@@ -5,6 +5,7 @@ const fs = require("fs");
 const path = require("path");
 const crypto = require("crypto");
 const local = require("./local.js");
+const seo = require("./seo-server.js");
 
 const ROOT = __dirname;
 
@@ -702,6 +703,25 @@ function serveStatic(req, res) {
   } catch (_) {
     return sendJson(res, 400, { error: "bad_url" });
   }
+
+  // 私有页面不收录
+  if (/^\/(admin|me|team|work|judge|login|certificate|receipt|cnkd|api|\.cloud)(\/|$)/.test(pathname)) {
+    res.setHeader("X-Robots-Tag", "noindex, nofollow");
+  }
+
+  // 爬虫直接给服务端快照，避免只拿到空壳 SPA
+  const isPage = pathname === "/" || pathname === "/index.html" || !path.extname(pathname);
+  if (isPage && seo.isBot(req.headers["user-agent"])) {
+    const snap = seo.renderBotPage(pathname, originOf(req));
+    res.writeHead(snap.status, {
+      "Content-Type": MIME[".html"],
+      "Cache-Control": "no-cache",
+      "Content-Length": Buffer.byteLength(snap.html),
+      "X-Content-Type-Options": "nosniff",
+    });
+    return res.end(snap.html);
+  }
+
   if (pathname === "/") pathname = "/index.html";
 
   const rel = pathname.replace(/^\/+/, "");
@@ -727,7 +747,10 @@ function serveStatic(req, res) {
       const index = path.join(ROOT, "index.html");
       return fs.readFile(index, (e2, buf) => {
         if (e2) return sendJson(res, 404, { error: "not_found" });
-        const html = Buffer.from(injectBoot(buf.toString("utf8"), req), "utf8");
+        const html = Buffer.from(
+          injectBoot(seo.injectSeo(buf.toString("utf8"), pathname, originOf(req)), req),
+          "utf8"
+        );
         res.writeHead(200, {
           "Content-Type": MIME[".html"],
           "Cache-Control": "no-cache",
@@ -749,7 +772,9 @@ function serveStatic(req, res) {
       : "public, max-age=86400";
     fs.readFile(filePath, (e2, buf) => {
       if (e2) return sendJson(res, 500, { error: "read_failed" });
-      const body = ext === ".html" ? Buffer.from(injectBoot(buf.toString("utf8"), req), "utf8") : buf;
+      const body = ext === ".html"
+        ? Buffer.from(injectBoot(seo.injectSeo(buf.toString("utf8"), pathname, originOf(req)), req), "utf8")
+        : buf;
       res.writeHead(200, {
         "Content-Type": type,
         "Cache-Control": cache,
@@ -904,11 +929,11 @@ const server = http.createServer({ maxHeaderSize: 64 * 1024 }, async (req, res) 
   if (url.pathname === "/api/cnkd/start") {
     const c = cnkdCfg();
     if (!c.enabled) {
-      return sendRedirect(res, "/#/cnkd?error=" + encodeURIComponent("CNKD 登录尚未配置客户端 ID"));
+      return sendRedirect(res, "/cnkd?error=" + encodeURIComponent("CNKD 登录尚未配置客户端 ID"));
     }
     const bind = url.searchParams.get("bind") === "1";
     if (bind && !(LOCAL_MODE && local.currentUser(req))) {
-      return sendRedirect(res, "/#/login?oauth_error=" + encodeURIComponent("请先登录再绑定 CNKD"));
+      return sendRedirect(res, "/login?oauth_error=" + encodeURIComponent("请先登录再绑定 CNKD"));
     }
     pruneCnkd();
     const verifier = b64url(crypto.randomBytes(32));
@@ -927,7 +952,7 @@ const server = http.createServer({ maxHeaderSize: 64 * 1024 }, async (req, res) 
   }
 
   if (url.pathname === "/api/cnkd/callback") {
-    const fail = (msg) => sendRedirect(res, "/#/cnkd?error=" + encodeURIComponent(msg));
+    const fail = (msg) => sendRedirect(res, "/cnkd?error=" + encodeURIComponent(msg));
     const c = cnkdCfg();
     if (!c.enabled) return fail("CNKD 登录尚未配置");
     if (url.searchParams.get("error")) {
@@ -988,12 +1013,12 @@ const server = http.createServer({ maxHeaderSize: 64 * 1024 }, async (req, res) 
 
     const flag =
       out.action === "created" ? "welcome=cnkd" : out.action === "bound" ? "linked=cnkd" : "login=cnkd";
-    return sendRedirect(res, `/#/me?${flag}`);
+    return sendRedirect(res, `/me?${flag}`);
   }
 
   if (url.pathname === "/api/github/start") {
     const g = githubCfg();
-    const failStart = (msg) => sendRedirect(res, "/#/login?oauth_error=" + encodeURIComponent(msg));
+    const failStart = (msg) => sendRedirect(res, "/login?oauth_error=" + encodeURIComponent(msg));
     if (!g.enabled) return failStart("GitHub 登录尚未配置");
     const bind = url.searchParams.get("bind") === "1";
     if (bind && !(LOCAL_MODE && local.currentUser(req))) {
@@ -1012,7 +1037,7 @@ const server = http.createServer({ maxHeaderSize: 64 * 1024 }, async (req, res) 
   }
 
   if (url.pathname === "/api/github/callback") {
-    const fail = (msg) => sendRedirect(res, "/#/login?oauth_error=" + encodeURIComponent(msg));
+    const fail = (msg) => sendRedirect(res, "/login?oauth_error=" + encodeURIComponent(msg));
     const g = githubCfg();
     if (!g.enabled) return fail("GitHub 登录尚未配置");
     if (!LOCAL_MODE) return fail("当前部署不支持 GitHub 账号");
@@ -1030,7 +1055,7 @@ const server = http.createServer({ maxHeaderSize: 64 * 1024 }, async (req, res) 
     const failAfter = (msg) =>
       sendRedirect(
         res,
-        (rec.bind ? "/#/me?oauth_error=" : "/#/login?oauth_error=") + encodeURIComponent(msg)
+        (rec.bind ? "/me?oauth_error=" : "/login?oauth_error=") + encodeURIComponent(msg)
       );
 
     let tok;
@@ -1075,7 +1100,7 @@ const server = http.createServer({ maxHeaderSize: 64 * 1024 }, async (req, res) 
 
     const flag =
       out.action === "created" ? "welcome=github" : out.action === "bound" ? "linked=github" : "login=github";
-    return sendRedirect(res, `/#/me?${flag}`);
+    return sendRedirect(res, `/me?${flag}`);
   }
 
   if (url.pathname === "/api/donate/afdian/sponsors") {
@@ -1100,8 +1125,7 @@ const server = http.createServer({ maxHeaderSize: 64 * 1024 }, async (req, res) 
    * 公开分数：只返回已公示作品的聚合分，不下发评语、评委名与单条打分。
    * 直接读 reviews 表对访客是 401，结果页因此拿不到分，这里单独开一个只读口子。
    */
-  if (url.pathname === "/api/results/scores" && req.method === "GET") {
-    if (!LOCAL_MODE) return sendJson(res, 404, { ok: false, error: "not_supported" });
+  if (url.pathname === "/api/results/scores" && req.method === "GET") {    if (!LOCAL_MODE) return sendJson(res, 404, { ok: false, error: "not_supported" });
     const publicIds = new Set(
       local.rows("submissions").filter((s) => s.status === "public").map((s) => Number(s.id))
     );
@@ -1132,6 +1156,19 @@ const server = http.createServer({ maxHeaderSize: 64 * 1024 }, async (req, res) 
     return sendJson(res, 200, { ok: true, scores });
   }
 
+  // 搜索引擎入口：robots 与动态 sitemap
+  if ((url.pathname === "/robots.txt" || url.pathname === "/sitemap.xml") && (req.method === "GET" || req.method === "HEAD")) {
+    const origin = originOf(req);
+    const isMap = url.pathname === "/sitemap.xml";
+    const body = isMap ? seo.sitemapXml(origin) : seo.robotsTxt(origin);
+    res.writeHead(200, {
+      "Content-Type": isMap ? "application/xml; charset=utf-8" : "text/plain; charset=utf-8",
+      "Cache-Control": "public, max-age=1800",
+      "Content-Length": Buffer.byteLength(body),
+    });
+    return res.end(req.method === "HEAD" ? undefined : body);
+  }
+
   if (LOCAL_MODE && url.pathname.startsWith("/.cloud/local/")) {
     await local.handle(req, res, url);
     return;
@@ -1154,7 +1191,7 @@ if (LOCAL_MODE) {
   local.init(DATA_DIR, path.join(ROOT, "scripts", "seed.json"));
 }
 
-const REQUIRED_FILES = ["index.html", "css/app.css", "js/main.js", "js/core.js"];
+const REQUIRED_FILES = ["index.html", "css/app.css", "js/main.js", "js/core.js", "js/seo.js", "seo-server.js", "assets/og-cover.png"];
 const missingFiles = REQUIRED_FILES.filter((f) => !fs.existsSync(path.join(ROOT, f)));
 if (missingFiles.length) {
   console.error(`[pixelsong] 启动失败：缺少必要文件 ${missingFiles.join(", ")}`);

@@ -96,8 +96,31 @@ async function boot() {
     await loadActivity().catch((e) => console.warn("[boot] activity", e));
     if (state.session) await loadMe(true).catch((e) => console.warn("[boot] me", e));
     registerRoutes();
-    if (!location.hash) location.replace("#/home");
-    window.addEventListener("hashchange", render);
+    // 旧链接 /#/rules 统一转成 /rules，canonical 只保留干净路径
+    if (location.hash.startsWith("#/")) {
+      const raw = location.hash.slice(1);
+      try {
+        history.replaceState(null, "", raw);
+      } catch (_) {}
+    }
+    window.addEventListener("popstate", render);
+    window.addEventListener("hashchange", () => {
+      if (!location.hash.startsWith("#/")) return;
+      const raw = location.hash.slice(1);
+      try {
+        history.replaceState(null, "", raw);
+      } catch (_) {}
+      render();
+    });
+    // 站内链接仍然写成 #/xxx，这里统一接管为 pushState
+    document.addEventListener("click", (e) => {
+      if (e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+      const a = e.target && e.target.closest ? e.target.closest('a[href^="#/"]') : null;
+      if (!a || a.hasAttribute("download")) return;
+      if (a.target && a.target !== "_self") return;
+      e.preventDefault();
+      navigate(a.getAttribute("href").slice(1));
+    });
     app.classList.remove("boot");
     await render();
   } catch (e) {

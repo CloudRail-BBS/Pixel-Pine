@@ -134,6 +134,10 @@ server {
 | `PS_MODE` | 否 | `local`（默认，本机自足）或 `cloud` |
 | `PS_DATA_DIR` | 否 | 本地模式数据目录，默认 `/app/data` |
 | `PORT` | 否 | 监听端口，默认 3000 |
+| `PS_PUBLIC_ORIGIN` | 否 | 对外访问地址，如 `https://www.pixelpine.org`；反代没传 `X-Forwarded-Host` 时必填，sitemap 与 OAuth 回调都靠它 |
+| `PS_SEO_GOOGLE` | 否 | Google Search Console 的 `google-site-verification` 值 |
+| `PS_SEO_BAIDU` | 否 | 百度搜索资源平台的 `baidu-site-verification` 值 |
+| `PS_SEO_BING` | 否 | Bing 站长工具的 `msvalidate.01` 值 |
 
 **邮件、人机验证、病毒扫描、CNKD 登录都不在这里配**：登录主办方后台 →「设置」，填完保存立即生效，密钥只存服务端。未配置时对应功能自动降级：极验跳过验证、CNKD 按钮不显示、病毒扫描显示未启用，登录与提交仍可用。`/api/health` 会如实报告状态。
 
@@ -214,6 +218,26 @@ SMTP 常见服务商参数：
 1. 作品包上传到 `users/<队长>/submissions/...`，**截止前只有本队队长可下载**；
 2. 提交截止后，队长在页面上点一次「发布到评审」，文件复制到 `shared/`，评委才能下载；
 3. 复制完成后其他登录用户也可下载——这正好对应规则中的「私密提交、截止后公开」。
+
+## 搜索引擎与 SEO
+
+站点已经按可收录的方式处理，不需要额外的 SSR 服务：
+
+- **干净 URL**：`/rules`、`/works/12`、`/results`，不再依赖 `#/`；旧的 `#/rules` 链接会在启动时自动换成 `/rules`
+- **`/robots.txt`**：放行公开页，屏蔽 `/admin`、`/me`、`/team`、`/judge`、`/login`、`/certificate` 等私有路径
+- **`/sitemap.xml`**：动态生成，包含首页、规则、作品列表、每件已公示作品、结果、评委、公告、鸣谢，带 `lastmod`
+- **爬虫快照**：Googlebot / Baiduspider / Bingbot 等访问公开路径时，服务端直接返回带正文的静态 HTML（标题、关键信息、赛道、赛程、规则全文、作品列表与详情、排名），不依赖 JS 渲染
+- **页面 head**：每个路径有独立的 title / description / canonical / Open Graph / Twitter Card，私有页带 `noindex` 与 `X-Robots-Tag`
+- **结构化数据**：首页 Event、作品详情 CreativeWork、列表页 CollectionPage / ItemList
+- **分享封面**：`assets/og-cover.png`（1200×630）
+
+上线后：
+
+1. 在 Google Search Console / 百度搜索资源平台 / Bing 站长工具添加站点，把验证码填进 `.env` 的 `PS_SEO_*`
+2. 提交 `https://你的域名/sitemap.xml`
+3. 用 `curl -A "Googlebot" https://你的域名/rules | head` 检查快照是否带正文
+
+`robots` 只是约定，不是访问控制；`/admin` 仍然要靠账号鉴权。
 
 ## 校验
 

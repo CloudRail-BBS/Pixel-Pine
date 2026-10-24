@@ -1,4 +1,4 @@
-import { state, shell, bindShell, toast, esc, fmtDate, fmtFull, requireLogin, busy, errMsg, db } from "./core.js";
+import { state, shell, bindShell, toast, esc, fmtDate, fmtFull, requireLogin, busy, errMsg, db, navigate } from "./core.js";
 import { getCertificateByCode, listMyCertificates, listVersions, getMySignature, listPartners } from "./api.js";
 import { trackOf } from "./config.js";
 
@@ -50,7 +50,7 @@ function certDocument(c, issuer, meta = {}) {
 
         <div class="cert-head">
           <div class="cert-brand">
-            <img class="cert-logo" src="assets/logo.svg" alt="" />
+            <img class="cert-logo" src="/assets/logo.svg" alt="" />
             <span class="cert-brand-text">像素松<small>PIXELSONG</small></span>
           </div>
           <div class="cert-head-right">
@@ -227,10 +227,9 @@ export async function certListView(el) {
   const go = () => {
     const code = el.querySelector("#v-code").value.trim();
     if (!code) return toast("请输入证书编号", "err");
-    location.hash = "#/verify?code=" + encodeURIComponent(code);
+    navigate("/verify?code=" + encodeURIComponent(code));
   };
-  el.querySelector("#btn-verify").onclick = go;
-  el.querySelector("#v-code").onkeydown = (e) => {
+  el.querySelector("#btn-verify").onclick = go;  el.querySelector("#v-code").onkeydown = (e) => {
     if (e.key === "Enter") go();
   };
 }
@@ -341,7 +340,7 @@ export async function verifyView(el, path) {
   const go = () => {
     const v = el.querySelector("#v-code").value.trim();
     if (!v) return toast("请输入证书编号", "err");
-    location.hash = "#/verify?code=" + encodeURIComponent(v);
+    navigate("/verify?code=" + encodeURIComponent(v));
   };
   el.querySelector("#btn-verify").onclick = go;
   el.querySelector("#v-code").onkeydown = (e) => {
@@ -361,7 +360,7 @@ function receiptDoc({ kind, serial, holder, lines, note, seal }) {
     <div class="cert-page" id="cert-print">
       <div class="cert-inner">
         <div class="cert-head">
-          <img class="cert-logo" src="assets/logo.svg" alt="" />
+          <img class="cert-logo" src="/assets/logo.svg" alt="" />
           <div class="cert-org">像 素 松<span>PIXELSONG</span></div>
         </div>
 

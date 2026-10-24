@@ -13,6 +13,7 @@ import {
 } from "./api.js";
 import { verifyCaptcha } from "./geetest.js";
 import { cnkdConfig, startCnkdLogin } from "./cnkd.js";
+import { setSeo } from "./seo.js";
 import { signedDownload } from "./upload.js";
 
 let pendingOtp = null;
@@ -460,6 +461,11 @@ export async function rulesView(el) {
 
   const a = state.activity || DEFAULT_ACTIVITY;
   const { html, toc } = renderDoc(doc.body);
+  setSeo({
+    title: doc.title,
+    desc: "像素松活动规则：赛制与时间、四条赛道、提交材料、原创性边界、兼容性测试、评审与奖项、知识产权与违规处理。",
+    path: "/rules",
+  });
 
   el.innerHTML = shell(`
     <header class="page-head">
@@ -702,10 +708,10 @@ export async function loginView(el) {
   const cfg = await loadAuthCfg();
 
   // OAuth 失败会带 oauth_error 回到登录页
-  const oauthError = new URLSearchParams(location.hash.split("?")[1] || "").get("oauth_error");
+  const oauthError = new URLSearchParams(location.search.slice(1) || location.hash.split("?")[1] || "").get("oauth_error");
   if (oauthError) {
     toast(oauthError, "err");
-    history.replaceState(null, "", "#/login");
+    history.replaceState(null, "", "/login");
   }
   const allowOtp = !LOCAL_MODE || Boolean(cfg.otp);
   // 只在没有验证码入口时把 otp 降级为密码登录；register / reset 不能被覆盖
@@ -1353,6 +1359,7 @@ export async function workDetailView(el, path) {
   } catch (_) {}
 
   if (!w) {
+    setSeo({ title: "作品不存在", desc: "这件作品尚未公示，或已被撤回。", path: `/works/${id}`, noindex: true });
     el.innerHTML = shell(`
       <div class="empty" style="max-width:520px;margin:70px auto">
         <p style="margin-bottom:6px">没有找到这件作品</p>
@@ -1366,6 +1373,22 @@ export async function workDetailView(el, path) {
   const d = w.detail || {};
   const l = w.links || {};
   const t = trackOf(w.track);
+  setSeo({
+    title: w.title,
+    desc: w.summary || `${w.title} · 像素松参赛作品`,
+    path: `/works/${w.id}`,
+    type: "article",
+    jsonLd: {
+      "@context": "https://schema.org",
+      "@type": "CreativeWork",
+      name: w.title,
+      description: w.summary || "",
+      url: location.origin + `/works/${w.id}`,
+      genre: t.name,
+      author: { "@type": "Organization", name: w.owner_name || "匿名队伍" },
+      datePublished: w.created_at,
+    },
+  });
   const sections = [
     ["创意来源", d.origin],
     ["核心玩法", d.gameplay],
