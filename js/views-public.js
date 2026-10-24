@@ -183,7 +183,7 @@ export async function homeView(el) {
         <span class="sec-no mono">02</span>
         <div class="sec-title"><h2>赛程</h2><p>从报名到颁奖，五个节点</p></div>
       </div>
-      <div class="split">
+      <div class="split-sec">
         <div class="steps">
           ${phases.map((p, i) => {
             const t = timeLeft(p.time);
@@ -458,17 +458,58 @@ export async function rulesView(el) {
     return;
   }
 
+  const a = state.activity || DEFAULT_ACTIVITY;
   const { html, toc } = renderDoc(doc.body);
 
   el.innerHTML = shell(`
-    <div class="split">
-      <aside class="side-nav">
+    <header class="page-head">
+      <div class="eyebrow">RULES & REGULATIONS · 2026</div>
+      <h1>${esc(doc.title)}</h1>
+      <div class="page-meta mono">UPDATED ${esc(fmtFull(doc.updated_at))} · 主办方在线维护</div>
+    </header>
+
+    <div class="facts">
+      <div class="fact fact-theme">
+        <span class="fact-k mono">THEME / 主题</span>
+        <b>${esc(a.theme)}</b>
+        <p>赛前公布方向性主题，正式题目于开幕时公布</p>
+      </div>
+      <div class="fact">
+        <span class="fact-k mono">TRACKS / 赛道</span>
+        <b>${TRACKS.length} 条赛道</b>
+        <p class="fact-tracks">${TRACKS.map(
+          (t) => `<span class="tc-${t.code}"><i></i>${esc(t.name)}</span>`
+        ).join("")}</p>
+      </div>
+      <div class="fact">
+        <span class="fact-k mono">TEAM / 队伍</span>
+        <b>3–5 人</b>
+        <p>也可个人参赛，每人只能提交 1 个作品</p>
+      </div>
+      <div class="fact">
+        <span class="fact-k mono">WINDOW / 开发窗口</span>
+        <b>72 小时</b>
+        <p>连续计时，不补时</p>
+      </div>
+      <div class="fact">
+        <span class="fact-k mono">DEADLINE / 提交截止</span>
+        <b>${esc(fmtDate(a.submitDeadline))}</b>
+        <p>作品包与参评材料同时锁定</p>
+      </div>
+      <div class="fact">
+        <span class="fact-k mono">FORMAT / 形式</span>
+        <b>${esc(a.venue || "全程线上")}</b>
+        <p>不设路演，按赛道独立评审</p>
+      </div>
+    </div>
+
+    <div class="rules-layout">
+      <aside class="side-nav rules-toc">
+        <div class="toc-label mono">CONTENTS</div>
         ${toc.map((t) => `<a href="#" data-scroll="${t.id}">${esc(t.title)}</a>`).join("")}
-        <a href="#/integrity" style="color:var(--accent);margin-top:6px">《诚信比赛公约》</a>
+        <a href="#/integrity" class="toc-extra">《诚信比赛公约》</a>
       </aside>
       <article class="rules">
-        <h1 style="font-size:22px;margin-bottom:6px">${esc(doc.title)}</h1>
-        <p class="small dim" style="margin-bottom:24px">本页由主办方在线维护 · 更新于 ${esc(fmtFull(doc.updated_at))}</p>
         ${html}
         <div class="divider"></div>
         <div class="card">
@@ -1142,7 +1183,11 @@ export async function resultsView(el) {
   const groups = TRACKS.map((t) => ({ ...t, rows: ranked.filter((r) => r.sub.track === t.code) }));
 
   el.innerHTML = shell(`
-    <div class="block-head"><h2>作品与结果</h2><span class="card-note">共 ${subs.length} 件已公示作品</span></div>
+    <header class="page-head">
+      <div class="eyebrow">RESULTS · ${TRACKS.length} TRACKS</div>
+      <h1>作品与结果</h1>
+      <div class="page-meta mono">${subs.length} PUBLIC ENTRIES · 按赛道独立排序</div>
+    </header>
     ${
       !subs.length
         ? `<div class="empty">
@@ -1152,17 +1197,20 @@ export async function resultsView(el) {
         : groups.map((g) => `
           <div class="block">
             <div class="row-between" style="margin-bottom:12px">
-              <div class="row">
-                <span class="tag ${g.side === "mc" ? "tag-blue" : "tag-amber"}">赛道 ${g.code}</span>
+              <div class="row" style="gap:10px">
+                <span class="track-badge tc-${g.code}" style="font-size:11px">赛道 ${g.code}</span>
                 <span class="strong">${esc(g.name)}</span>
               </div>
               <span class="card-note">${g.rows.length} 件</span>
             </div>
             <div class="grid grid-2">
-              ${g.rows.map((r) => `
-                <div class="card">
+              ${g.rows.map((r, i) => `
+                <div class="card result-card tc-${g.code}">
                   <div class="row-between" style="margin-bottom:8px">
-                    <a class="strong" style="font-size:15px" href="#/works/${r.sub.id}">${esc(r.sub.title)}</a>
+                    <div class="row" style="gap:9px;min-width:0">
+                      <span class="result-idx mono">${String(i + 1).padStart(2, "0")}</span>
+                      <a class="strong" style="font-size:15px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" href="#/works/${r.sub.id}">${esc(r.sub.title)}</a>
+                    </div>
                     ${r.judgeCount ? `<span class="tag ${r.qualified ? "tag-teal" : "tag-red"}">${r.avg} 分</span>` : ""}
                   </div>
                   <p class="small muted" style="margin-bottom:12px">${esc(r.sub.summary || "")}</p>
@@ -1222,15 +1270,16 @@ export async function worksView(el, path) {
   );
 
   const chip = (code, label, n) => `
-    <a class="wk-chip ${track === code ? "on" : ""}" href="#/works${code ? "?track=" + code : ""}">
+    <a class="wk-chip tc-${code || "all"} ${track === code ? "on" : ""}" href="#/works${code ? "?track=" + code : ""}">
       ${esc(label)}<b>${n}</b>
     </a>`;
 
   el.innerHTML = shell(`
-    <div class="block-head">
-      <h2>参赛作品</h2>
-      <span class="card-note">共 ${all.length} 件已公示</span>
-    </div>
+    <header class="page-head">
+      <div class="eyebrow">EXHIBITION · ${TRACKS.length} TRACKS</div>
+      <h1>参赛作品</h1>
+      <div class="page-meta mono">${all.length} PUBLIC ENTRIES · 提交截止后统一公示</div>
+    </header>
 
     ${
       !all.length
@@ -1257,9 +1306,7 @@ export async function worksView(el, path) {
                  </div>
                  <div class="work-body">
                    <div class="row-between" style="margin-bottom:7px">
-                     <span class="tag ${w.track === "A" || w.track === "B" ? "tag-blue" : "tag-amber"}">${esc(
-                   trackOf(w.track).name
-                 )}</span>
+                     <span class="track-badge tc-${esc(w.track)}">${esc(trackOf(w.track).name)}</span>
                      <span class="tiny dim">${esc(workDate(w))}</span>
                    </div>
                    <h3 class="work-title">${esc(w.title)}</h3>
