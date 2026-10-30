@@ -1921,7 +1921,7 @@ a.org-card:hover .org-out { opacity: 1; }
   display: grid;
   grid-template-columns: minmax(0, 1.15fr) minmax(0, 0.85fr);
   gap: 40px;
-  align-items: start;
+  align-items: center;
 }
 .steps { position: relative; }
 .step {
@@ -2016,39 +2016,82 @@ a.org-card:hover .org-out { opacity: 1; }
 .step.now h3 { color: var(--accent); font-size: 17px; letter-spacing: -0.3px; }
 
 .score-panel {
+  position: relative;
+  display: flex;
+  flex-direction: column;
   border: 1px solid var(--line);
   border-radius: var(--radius);
   background: var(--surface);
-  padding: 20px 22px 18px;
+  padding: 20px 22px 0;
+  overflow: hidden;
+}
+.score-panel::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: 2px;
+  background: linear-gradient(90deg, var(--accent), transparent 72%);
+  opacity: 0.6;
 }
 .score-head {
   display: flex;
-  align-items: baseline;
+  align-items: flex-start;
   justify-content: space-between;
-  margin-bottom: 16px;
+  gap: 14px;
+  padding-bottom: 15px;
+  border-bottom: 1px solid var(--line);
 }
-.score-head .mono {
-  font-size: 9px;
-  letter-spacing: 1.8px;
+.score-eyebrow {
+  font-size: 8.5px;
+  letter-spacing: 1.6px;
   color: var(--dim);
 }
-.score-head b { font-size: 13px; font-weight: 500; }
+.score-head h3 {
+  margin: 7px 0 0;
+  font-size: 17px;
+  font-weight: 500;
+  letter-spacing: -0.3px;
+}
+.score-total { text-align: right; flex: 0 0 auto; }
+.score-total b {
+  display: block;
+  font-family: var(--mono);
+  font-size: 28px;
+  line-height: 1;
+  letter-spacing: -1px;
+  color: var(--accent);
+  font-variant-numeric: tabular-nums;
+}
+.score-total span {
+  display: block;
+  margin-top: 5px;
+  font-size: 8px;
+  letter-spacing: 1.5px;
+  color: var(--dim);
+}
+.score-list { list-style: none; margin: 0; padding: 7px 0 5px; }
 .score-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 64px 36px;
+  grid-template-columns: 20px minmax(0, 1fr) 58px 40px;
   align-items: center;
   gap: 10px;
   padding: 8px 0;
 }
+.score-index {
+  font-size: 9px;
+  color: var(--dim);
+}
 .score-name {
-  font-size: 12px;
-  color: var(--muted);
+  font-size: 12.5px;
+  color: var(--text);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 .score-bar {
-  height: 2px;
+  height: 3px;
   border-radius: 2px;
   background: var(--hover-3);
   overflow: hidden;
@@ -2056,22 +2099,43 @@ a.org-card:hover .org-out { opacity: 1; }
 .score-bar i {
   display: block;
   height: 100%;
+  border-radius: 2px;
   background: var(--accent);
-  opacity: 0.85;
+  opacity: 0.8;
 }
 .score-w {
-  font-size: 10.5px;
+  font-size: 12px;
   text-align: right;
   color: var(--text);
+  font-variant-numeric: tabular-nums;
 }
-.score-note {
-  margin: 16px 0 0;
-  padding-top: 13px;
+.score-w small {
+  font-size: 9.5px;
+  color: var(--muted);
+  margin-left: 1px;
+}
+.score-floor {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  margin: 6px -22px 0;
+  padding: 13px 22px 15px;
   border-top: 1px solid var(--line);
-  font-size: 11px;
-  line-height: 1.7;
+  background: var(--hover-1);
+}
+.score-floor-k {
+  flex: 0 0 auto;
+  font-size: 8.5px;
+  letter-spacing: 1.3px;
   color: var(--dim);
 }
+.score-floor p {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.7;
+  color: var(--muted);
+}
+.score-floor b { color: var(--accent); font-weight: 500; }
 
 /* 公告 */
 .notice-list { border-top: 1px solid var(--line); }
@@ -2117,6 +2181,9 @@ a.org-card:hover .org-out { opacity: 1; }
   .sec-head { gap: 12px; }
   .sec-meta { display: none; }
   .step.now::after { inset: 1px -8px; }
+  .score-panel { padding: 17px 16px 0; }
+  .score-floor { margin-left: -16px; margin-right: -16px; padding-left: 16px; padding-right: 16px; }
+  .score-row { grid-template-columns: 18px minmax(0, 1fr) 48px 38px; gap: 8px; }
   .cd-digits b { font-size: 27px; }
   .sec-title h2 { font-size: 20px; }
 }
@@ -2280,27 +2347,39 @@ a.org-card:hover .org-out { opacity: 1; }
 
 /* ==================== 首页 FAQ ==================== */
 
-.faq-list { border-top: 1px solid var(--line); }
-.faq-item { border-bottom: 1px solid var(--line); }
-.faq-item summary {
-  display: flex; align-items: baseline; gap: 14px;
-  padding: 16px 2px; cursor: pointer; list-style: none;
-  font-size: 14px; color: var(--text);
-  transition: color 0.16s var(--ease), background 0.16s var(--ease);
+.faq-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  column-gap: 48px;
 }
-.faq-item summary::-webkit-details-marker { display: none; }
-.faq-item summary::after {
-  content: "+"; margin-left: auto; font-family: var(--mono);
-  color: var(--dim); font-size: 14px;
+.faq-item {
+  padding: 18px 0 20px;
+  border-top: 1px solid var(--line);
 }
-.faq-item[open] summary::after { content: "−"; color: var(--accent); }
-.faq-item[open] summary { color: var(--accent); }
-.faq-item summary:hover { background: var(--hover-1); }
-.faq-item summary:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
-.faq-no { font-size: 9.5px; color: var(--dim); letter-spacing: 0.5px; flex: 0 0 auto; }
-.faq-item p {
-  margin: 0 0 16px 30px; font-size: 12.5px; line-height: 1.75;
-  color: var(--muted); max-width: 72ch;
+.faq-q {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+.faq-no {
+  flex: 0 0 auto;
+  font-size: 9.5px;
+  letter-spacing: 1px;
+  color: var(--accent);
+}
+.faq-q h3 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 500;
+  letter-spacing: -0.2px;
+}
+.faq-a {
+  margin: 0 0 0 32px;
+  max-width: 46ch;
+  font-size: 12.5px;
+  line-height: 1.75;
+  color: var(--muted);
 }
 
 /* ==================== 后台 SEO ==================== */
@@ -2330,7 +2409,9 @@ a.org-card:hover .org-out { opacity: 1; }
 @media (max-width: 640px) {
   .diag-row { grid-template-columns: 10px minmax(0, 1fr); }
   .diag-val { grid-column: 2; white-space: normal; }
-  .faq-item p { margin-left: 0; }
+  .faq-grid { grid-template-columns: minmax(0, 1fr); column-gap: 0; }
+  .faq-a { margin-left: 30px; }
+  .faq-q h3 { font-size: 14.5px; }
 }
 
 /* ==================== 审核工作台 ==================== */

@@ -91,6 +91,8 @@ export async function homeView(el) {
   const cdM = Math.floor((cdMs % 3600000) / 60000);
   const pad2 = (n) => String(n).padStart(2, "0");
   const maxWeight = Math.max(...DIMENSIONS.map((d) => d.weight));
+  const totalWeight = DIMENSIONS.reduce((n, d) => n + d.weight, 0);
+  const cnCount = (n) => ["一", "二", "三", "四", "五", "六", "七", "八"][n - 1] || String(n);
 
   const stats = [
     { label: "Tracks", value: TRACKS.length, unit: "条" },
@@ -218,16 +220,28 @@ export async function homeView(el) {
         </div>
         <aside class="score-panel">
           <div class="score-head">
-            <span class="mono">RUBRIC</span>
-            <b>${DIMENSIONS.length} 维加权</b>
+            <div>
+              <span class="score-eyebrow mono">RUBRIC · 评审标准</span>
+              <h3>${cnCount(DIMENSIONS.length)} 个维度，加权计分</h3>
+            </div>
+            <div class="score-total">
+              <b>${totalWeight}</b>
+              <span class="mono">TOTAL</span>
+            </div>
           </div>
-          ${DIMENSIONS.map((d) => `
-            <div class="score-row">
-              <span class="score-name">${esc(d.name)}</span>
-              <span class="score-bar"><i style="width:${Math.round((d.weight / maxWeight) * 100)}%"></i></span>
-              <span class="score-w mono">${d.weight}%</span>
-            </div>`).join("")}
-          <p class="score-note">总分低于 60 分的作品不授予等级奖；同分按可运行性、创意、玩法依次排序。</p>
+          <ol class="score-list">
+            ${DIMENSIONS.map((d, i) => `
+              <li class="score-row">
+                <span class="score-index mono">0${i + 1}</span>
+                <span class="score-name">${esc(d.name)}</span>
+                <span class="score-bar"><i style="width:${Math.round((d.weight / maxWeight) * 100)}%"></i></span>
+                <span class="score-w mono">${d.weight}<small>%</small></span>
+              </li>`).join("")}
+          </ol>
+          <div class="score-floor">
+            <span class="score-floor-k mono">THRESHOLD</span>
+            <p>总分低于 <b>60</b> 分不授予等级奖；同分按可运行性、创意、玩法依次排序。</p>
+          </div>
         </aside>
       </div>
     </section>
@@ -236,13 +250,17 @@ export async function homeView(el) {
       <div class="sec-head">
         <span class="sec-no mono">03</span>
         <div class="sec-title"><h2>常见问题</h2><p>报名、提交与评审</p></div>
+        <a class="sec-link mono" href="#/rules">完整规则 →</a>
       </div>
-      <div class="faq-list">
+      <div class="faq-grid">
         ${FAQS.map((f, i) => `
-          <details class="faq-item" ${i === 0 ? "open" : ""}>
-            <summary><span class="faq-no mono">0${i + 1}</span><span>${esc(f.q)}</span></summary>
-            <p>${esc(f.a)}</p>
-          </details>`).join("")}
+          <article class="faq-item">
+            <div class="faq-q">
+              <span class="faq-no mono">Q${String(i + 1).padStart(2, "0")}</span>
+              <h3>${esc(f.q)}</h3>
+            </div>
+            <p class="faq-a">${esc(f.a)}</p>
+          </article>`).join("")}
       </div>
     </section>
 
