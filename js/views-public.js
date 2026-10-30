@@ -56,7 +56,7 @@ export async function homeView(el) {
   let subs = [];
   let notices = [];
   try {
-    subs = await allSubmissions();
+    subs = await publicWorks();
   } catch (_) {}
   try {
     notices = (await listAnnouncements()).slice(0, 3);
@@ -165,18 +165,29 @@ export async function homeView(el) {
       <div class="sec-head">
         <span class="sec-no mono">01</span>
         <div class="sec-title"><h2>四条赛道</h2><p>按游戏 + 作品类型分赛道，跨赛道不直接比较</p></div>
+        <span class="sec-meta mono">2 GAMES · 4 TRACKS</span>
       </div>
       <div class="track-grid">
-        ${TRACKS.map((t) => `
-          <article class="track-panel tc-${t.code}">
+        ${TRACKS.map((t, i) => {
+          const n = subs.filter((x) => x.track === t.code).length;
+          return `
+          <a class="track-panel tc-${t.code}" href="#/works?track=${t.code}" aria-label="赛道 ${t.code} · ${esc(t.name)}，查看该赛道作品">
+            <span class="track-wm" aria-hidden="true">${t.code}</span>
             <div class="track-top">
-              <span class="track-code">${t.code}</span>
-              <span class="track-game mono">${t.side === "mc" ? "MINECRAFT" : "RUSTED WARFARE"}</span>
+              <span class="track-idx mono">0${i + 1}</span>
+              <span class="track-game mono"><i aria-hidden="true"></i>${t.side === "mc" ? "MINECRAFT" : "RUSTED WARFARE"}</span>
             </div>
-            <h3>${esc(t.name)}</h3>
+            <div class="track-title">
+              <h3>${esc(t.name)}</h3>
+              <span class="track-type mono">${esc(t.type)}</span>
+            </div>
             <p>${esc(trackBlurb(t.code))}</p>
-            <div class="track-foot mono">TRACK ${t.code} <span>↗</span></div>
-          </article>`).join("")}
+            <div class="track-foot">
+              <span class="mono">TRACK ${t.code}</span>
+              <span class="track-go mono">${n ? `${n} 件作品` : "查看作品"} <b>→</b></span>
+            </div>
+          </a>`;
+        }).join("")}
       </div>
     </section>
 
@@ -184,6 +195,7 @@ export async function homeView(el) {
       <div class="sec-head">
         <span class="sec-no mono">02</span>
         <div class="sec-title"><h2>赛程</h2><p>从报名到颁奖，五个节点</p></div>
+        <span class="sec-meta mono">5 MILESTONES</span>
       </div>
       <div class="split-sec">
         <div class="steps">
@@ -191,7 +203,7 @@ export async function homeView(el) {
             const t = timeLeft(p.time);
             const passed = t.over;
             const next = !passed && (i === 0 || timeLeft(phases[i - 1].time).over);
-            return `<div class="step ${passed ? "done" : next ? "now" : ""}">
+            return `<div class="step ${passed ? "done" : next ? "now" : ""}"${next ? ' aria-current="step"' : ""}>
               <span class="step-no mono">${pad2(i + 1)}</span>
               <div class="step-body">
                 <div class="step-head">
