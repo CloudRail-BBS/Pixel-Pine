@@ -82,7 +82,7 @@ export async function adminView(el, path) {
     listSponsors().catch(() => []),
   ]);
 
-  const reviewed = reviews.filter((r) => r.status === "submitted");
+  const reviewed = reviews.filter((r) => r.status === "submitted" || r.status === "locked");
   const counts = trackCounts(teams, subs);
   const pendingAppeals = appeals.filter((a) => a.status === "open");
   const pendingTeams = teams.filter((t) => t.status === "pending");
@@ -135,65 +135,341 @@ export async function adminView(el, path) {
 
 /* ------------------------------ 概览 ------------------------------ */
 
+const OV_DAY = 86400000;
+const ovPad = (n) => String(n).padStart(2, "0");
+
+function ovGap(ms) {
+  const abs = Math.abs(ms);
+  const d = Math.floor(abs / OV_DAY);
+  const h = Math.floor((abs % OV_DAY) / 3600000);
+  const m = Math.floor((abs % 3600000) / 60000);
+  if (d > 0) return `${d} 天 ${h} 小时`;
+  if (h > 0) return `${h} 小时 ${m} 分`;
+  return `${Math.max(1, m)} 分钟`;
+}
+
+function ovShort(iso) {
+  if (!iso) return "未设置";
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return "未设置";
+  return `${d.getMonth() + 1}.${ovPad(d.getDate())}`;
+}
+
+function ovRail(a, now) {
+  const num = (v) => {
+    const t = v ? new Date(v).getTime() : NaN;
+    return Number.isFinite(t) ? t : NaN;
+  };
+  const signup = num(a.signupDeadline);
+  const start = num(a.eventStart);
+  const submit = num(a.submitDeadline);
+  const judge = num(a.judgeDeadline);
+  const road = num(a.roadshowAt);
+  const stages = [
+    { label: "报名", note: `${ovShort(a.signupDeadline)} 截止`, from: 0, to: signup },
+    { label: "赛前", note: `${ovShort(a.eventStart)} 开始`, from: signup, to: start },
+    { label: "开发", note: `${ovShort(a.submitDeadline)} 截止`, from: start, to: submit },
+    { label: "评审", note: `${ovShort(a.judgeDeadline)} 截止`, from: submit, to: judge },
+    { label: "公示", note: `${ovShort(a.roadshowAt)} 颁奖`, from: judge, to: Infinity },
+  ];
+  const idx = stages.findIndex((s) => now >= s.from && now < s.to);
+  const cur = idx >= 0 ? stages[idx] : null;
+  const label = !cur
+    ? "赛程未设置"
+    : Number.isFinite(cur.to)
+      ? `当前 · ${cur.label} · 还剩 ${ovGap(cur.to - now)}`
+      : `当前 · ${cur.label}`;
+  const pct = idx >= 0 ? (idx / (stages.length - 1)) * 100 : 0;
+  return {
+    label,
+    html: `
+      <div class="rail-wrap">
+        <div class="rail-line" aria-hidden="true"><i style="width:${pct}%"></i></div>
+        <ol class="rail" aria-label="赛程进度">
+          ${stages.map((s, i) => {
+            const cls = i < idx ? "done" : i === idx ? "now" : "todo";
+            return `<li class="${cls}"${i === idx ? ' aria-current="step"' : ""}>
+              <i class="rail-dot" aria-hidden="true"></i>
+              <b>${s.label}</b>
+              <span class="rail-note">${esc(s.note)}</span>
+            </li>`;
+          }).join("")}
+        </ol>
+      </div>`,
+  };
+}
+
 function overviewTab(d) {
   const now = Date.now();
   const a = state.activity || {};
-  const stages = [
-    { label: "报名中", from: 0, to: new Date(a.signupDeadline || 0).getTime() },
-    { label: "赛前准备", from: new Date(a.signupDeadline || 0).getTime(), to: new Date(a.eventStart || 0).getTime() },
-    { label: "开发中", from: new Date(a.eventStart || 0).getTime(), to: new Date(a.submitDeadline || 0).getTime() },
-    { label: "评审中", from: new Date(a.submitDeadline || 0).getTime(), to: new Date(a.judgeDeadline || 0).getTime() },
-    { label: "公示与颁奖", from: new Date(a.judgeDeadline || 0).getTime(), to: Infinity },
-  ];
-  const cur = stages.find((s) => now >= s.from && now < s.to) || stages[stages.length - 1];
+  const rail = ovRail(a, now);
+
+  const liveSubs = d.subs.filter((s) => s.status !== "draft");
+  const passed = liveSubs.filter((s) => s.status === "passed" || s.status === "public");
+  const pendingWorks = liveSubs.filter((s) => s.status === "submitted");
+  const fixing = liveSubs.filter((s) => s.status === "fix_required");
   const totalReviews = d.reviews.length;
   const doneReviews = d.reviewed.length;
+  const reviewPct = totalReviews ? Math.round((doneReviews / totalReviews) * 100) : 0;
+  const approvedTeams = d.teams.filter((t) => t.status === "approved").length;
+  const memberCount = (id) => d.members.filter((m) => m.team_id === id).length;
 
+  const reviewsOf = (id) => d.reviews.filter((r) => Number(r.submission_id) === Number(id));
+  const assignedCount = (id) => reviewsOf(id).length;
+
+  /* ---------- 待办 ---------- */
   const todo = [
-    { n: d.pendingTeams.length, t: "支队伍待审核", href: "#/admin/teams", on: d.pendingTeams.length > 0 },
-    { n: d.pendingWorks.length, t: "件作品待兼容性检查", href: "#/admin/works", on: d.pendingWorks.length > 0 },
-    { n: totalReviews - doneReviews, t: "份评分待提交", href: "#/admin/review", on: totalReviews - doneReviews > 0 },
-    { n: d.pendingAppeals.length, t: "条申诉待处理", href: "#/admin/appeals", on: d.pendingAppeals.length > 0 },
-  ].filter((x) => x.on);
+    {
+      n: d.pendingTeams.length,
+      t: "支队伍待审核",
+      desc: "通过后队伍才能提交作品",
+      href: "#/admin/teams",
+    },
+    {
+      n: pendingWorks.length,
+      t: "件作品待检查",
+      desc: "确认可加载、依赖完整、无恶意内容",
+      href: "#/admin/works",
+    },
+    {
+      n: totalReviews - doneReviews,
+      t: "份评分未提交",
+      desc: "已派评但评委尚未交分",
+      href: "#/admin/review",
+    },
+    {
+      n: d.pendingAppeals.length,
+      t: "条申诉待处理",
+      desc: "涉及资格与评分的申诉优先",
+      href: "#/admin/appeals",
+    },
+  ].filter((x) => x.n > 0);
+
+  if (!todo.length && doneReviews > 0 && doneReviews === totalReviews && passed.length) {
+    todo.push({
+      n: passed.length,
+      t: "件作品待公示",
+      desc: "评分已齐，可以发布结果",
+      href: "#/admin/results",
+    });
+  }
+  const todoTotal = todo.reduce((n, x) => n + x.n, 0);
+
+  /* ---------- 需要关注 ---------- */
+  const alerts = [];
+  const push = (sev, title, desc, href, action) => alerts.push({ sev, title, desc, href, action });
+
+  const noJudge = passed.filter((s) => assignedCount(s.id) === 0);
+  if (noJudge.length) {
+    push(
+      "high",
+      `${noJudge.length} 件已通过作品还没有评委`,
+      "这些作品不会出现在任何评委的列表里，评审结束后无法计分。",
+      "#/admin/review",
+      "去派评"
+    );
+  }
+
+  const underJudge = passed.filter((s) => {
+    const n = assignedCount(s.id);
+    return n > 0 && n < 3;
+  });
+  if (underJudge.length) {
+    push(
+      "warn",
+      `${underJudge.length} 件作品评委不足 3 位`,
+      "单人评分容易失真，建议每件至少 3 位评委。",
+      "#/admin/review",
+      "补齐评委"
+    );
+  }
+
+  const spread = passed.filter((s) => {
+    const totals = reviewsOf(s.id)
+      .filter((r) => r.status !== "draft" && r.total != null && Number.isFinite(Number(r.total)))
+      .map((r) => Number(r.total));
+    return totals.length >= 2 && Math.max(...totals) - Math.min(...totals) >= 15;
+  });
+  if (spread.length) {
+    push(
+      "warn",
+      `${spread.length} 件作品分差超过 15 分`,
+      "同一件作品的评分分歧较大，公示前建议复核评分理由。",
+      "#/admin/results",
+      "看排名"
+    );
+  }
+
+  const fixExpired = fixing.filter((s) => s.fix_deadline && new Date(s.fix_deadline).getTime() < now);
+  if (fixExpired.length) {
+    push(
+      "warn",
+      `${fixExpired.length} 件作品的修复窗口已关闭`,
+      "队伍无法再提交修复版本，需要决定按当前版本继续还是取消资格。",
+      "#/admin/works",
+      "去处理"
+    );
+  }
+
+  const fixClosing = fixing.filter((s) => {
+    if (!s.fix_deadline) return false;
+    const left = new Date(s.fix_deadline).getTime() - now;
+    return left > 0 && left < 2 * 3600000;
+  });
+  if (fixClosing.length) {
+    push(
+      "info",
+      `${fixClosing.length} 件作品修复窗口不足 2 小时`,
+      "窗口关闭后队伍将不能再次提交，可提前提醒。",
+      "#/admin/works",
+      "查看"
+    );
+  }
+
+  const stale = pendingWorks.filter((s) => now - new Date(s.updated_at || s.created_at || 0).getTime() > OV_DAY);
+  if (stale.length) {
+    push(
+      "warn",
+      `${stale.length} 件作品提交超过 24 小时未检查`,
+      "兼容性检查拖得越久，队伍可用的修复时间越少。",
+      "#/admin/works",
+      "去检查"
+    );
+  }
+
+  const thinTeams = d.teams.filter(
+    (t) => t.status === "approved" && t.kind !== "individual" && memberCount(t.id) < 3
+  );
+  if (thinTeams.length) {
+    push(
+      "warn",
+      `${thinTeams.length} 支已通过队伍不足 3 人`,
+      "少于 3 人可能不满足参赛要求，确认后再保留参赛资格。",
+      "#/admin/teams",
+      "看队伍"
+    );
+  }
+
+  const noPkg = passed.filter((s) => !s.file_path);
+  if (noPkg.length) {
+    push(
+      "high",
+      `${noPkg.length} 件已通过作品没有作品包`,
+      "缺少附件将无法复核与归档，公示后也下载不到。",
+      "#/admin/works",
+      "去核对"
+    );
+  }
+
+  if (d.pendingTeams.length && a.signupDeadline && now > new Date(a.signupDeadline).getTime()) {
+    push(
+      "info",
+      "报名已截止，仍有队伍待审核",
+      "超过报名截止时间的队伍是否保留资格，需要主办方确认。",
+      "#/admin/teams",
+      "去审核"
+    );
+  }
+
+  const judgeLeft =
+    a.judgeDeadline && new Date(a.judgeDeadline).getTime() > now
+      ? new Date(a.judgeDeadline).getTime() - now
+      : 0;
+  if (judgeLeft && judgeLeft < 3 * OV_DAY && doneReviews < totalReviews) {
+    push(
+      "high",
+      `评审截止还剩 ${ovGap(judgeLeft)}，仍有 ${totalReviews - doneReviews} 份评分未提交`,
+      "截止后未提交的评分不会计入排名。",
+      "#/admin/review",
+      "催评"
+    );
+  }
+
+  alerts.sort((x, y) => {
+    const rank = { high: 0, warn: 1, info: 2 };
+    return rank[x.sev] - rank[y.sev];
+  });
 
   const intro = d.intro;
   return `
     <div class="card block">
-      <div class="card-head">
-        <h2>活动介绍</h2>
-        <div class="row" style="gap:10px">
-          ${intro ? `<span class="card-note">v${esc(String(intro.version))} · ${esc(fmtFull(intro.updated_at))}</span>` : ""}
-          <a class="card-note" href="#/admin/content">编辑</a>
-        </div>
+      <div class="card-head"><h2>赛程进度</h2><span class="card-note">${esc(rail.label)}</span></div>
+      ${rail.html}
+    </div>
+
+    <div class="ov-metrics block">
+      <a class="ov-metric" href="#/admin/teams">
+        <span class="ov-k">队伍</span>
+        <span class="ov-v">${d.teams.length}</span>
+        <span class="ov-sub">${approvedTeams} 已通过 · ${d.pendingTeams.length} 待审</span>
+      </a>
+      <a class="ov-metric" href="#/admin/works">
+        <span class="ov-k">作品</span>
+        <span class="ov-v">${liveSubs.length}</span>
+        <span class="ov-sub">${passed.length} 已通过 · ${pendingWorks.length} 待检查</span>
+      </a>
+      <a class="ov-metric" href="#/admin/review">
+        <span class="ov-k">评分进度</span>
+        <span class="ov-v">${doneReviews}<small>/ ${totalReviews}</small></span>
+        ${totalReviews ? `<span class="ov-bar"><i style="width:${reviewPct}%"></i></span>` : ""}
+        <span class="ov-sub">${totalReviews ? `${reviewPct}% 已提交` : "尚未派评"}</span>
+      </a>
+      <div class="ov-metric is-static">
+        <span class="ov-k">待处理</span>
+        <span class="ov-v">${todoTotal}</span>
+        <span class="ov-sub">${todo.length ? `${todo.length} 类事项` : "已清空"}</span>
       </div>
+    </div>
+
+    <div class="block">
+      <div class="block-head"><h2>待办</h2><span class="card-note">${todo.length ? todo.length + " 项" : "已清空"}</span></div>
       ${
-        intro
-          ? `<p class="small muted" style="white-space:pre-wrap;margin:0 0 10px;max-width:78ch">${esc(intro.body)}</p>
-             <p class="tiny dim" style="margin:0">这段文字同时用于前台首页标题下方那句导语（取第一段）。</p>`
-          : `<p class="small dim" style="margin:0">尚未填写。到「内容 → 活动介绍」写一段，前台首页与这里会一起更新。</p>`
+        todo.length
+          ? `<div class="ov-todo">${todo
+              .map(
+                (x) => `<a class="ov-task" href="${x.href}">
+                  <span class="ov-task-h"><b>${x.n}</b><span>${esc(x.t)}</span></span>
+                  <span class="ov-task-d">${esc(x.desc)}</span>
+                  <span class="ov-task-go">去处理 →</span>
+                </a>`
+              )
+              .join("")}</div>`
+          : d.teams.length || liveSubs.length
+            ? `<div class="ov-clear"><span class="mono">ALL CLEAR</span><p>没有待处理事项，赛程按计划推进。</p></div>`
+            : `<div class="ov-clear"><span class="mono">WAITING</span><p>报名开放后，队伍审核、作品检查与评分会陆续出现在这里。</p></div>`
       }
     </div>
 
-    <div class="grid grid-4 block">
-      <div class="stat"><div class="stat-label">队伍</div><div class="stat-value">${d.teams.length}</div></div>
-      <div class="stat"><div class="stat-label">作品</div><div class="stat-value">${d.subs.filter((s) => s.status !== "draft").length}</div></div>
-      <div class="stat"><div class="stat-label">评分进度</div><div class="stat-value">${doneReviews}<small>/ ${totalReviews}</small></div></div>
-      <div class="stat"><div class="stat-label">当前阶段</div><div class="stat-value" style="font-size:17px">${esc(cur.label)}</div></div>
-    </div>
-
     <div class="card block">
-      <div class="card-head"><h2>待办</h2><span class="card-note">${todo.length ? todo.length + " 项" : "已清空"}</span></div>
-      ${todo.length ? todo.map((x) => `
-        <a class="todo-row" href="${x.href}">
-          <span class="todo-n">${x.n}</span>
-          <span class="todo-t">${esc(x.t)}</span>
-          <span class="todo-arrow">→</span>
-        </a>`).join("") : '<p class="small dim" style="margin:0">当前没有待处理事项</p>'}
+      <div class="card-head">
+        <h2>需要关注</h2>
+        <span class="card-note">${alerts.length ? alerts.length + " 项" : "无异常"}</span>
+      </div>
+      ${
+        alerts.length
+          ? `<ul class="alert-list">${alerts
+              .map(
+                (x) => `<li class="alert-item ${x.sev}">
+                  <i class="alert-flag" aria-hidden="true"></i>
+                  <div class="alert-body">
+                    <b>${esc(x.title)}</b>
+                    <p>${esc(x.desc)}</p>
+                  </div>
+                  <a class="alert-go" href="${x.href}">${esc(x.action)} →</a>
+                </li>`
+              )
+              .join("")}</ul>`
+          : `<p class="small muted" style="margin:0">${
+              liveSubs.length
+                ? "派评、评分与作品包都没有发现缺口。"
+                : "还没有作品提交，收到作品后会在这里提示派评与评分缺口。"
+            }</p>`
+      }
     </div>
 
     <div class="card block">
       <div class="card-head"><h2>签署与确认</h2>
-        <span class="card-note">${((d.profiles || []).length) || 0} 个账号</span>
+        <span class="card-note">${(d.profiles || []).length || 0} 个账号</span>
       </div>
       ${(() => {
         const total = (d.profiles || []).length || 0;
@@ -233,6 +509,22 @@ function overviewTab(d) {
           </tr>`;
         }).join("")}</tbody>
       </table></div>
+    </div>
+
+    <div class="card block">
+      <div class="card-head">
+        <h2>活动介绍</h2>
+        <div class="row" style="gap:10px">
+          ${intro ? `<span class="card-note">v${esc(String(intro.version))} · ${esc(fmtFull(intro.updated_at))}</span>` : ""}
+          <a class="card-note" href="#/admin/content">编辑</a>
+        </div>
+      </div>
+      ${
+        intro
+          ? `<p class="small muted" style="white-space:pre-wrap;margin:0 0 10px;max-width:78ch">${esc(intro.body)}</p>
+             <p class="tiny dim" style="margin:0">这段文字同时用于前台首页标题下方那句导语（取第一段）。</p>`
+          : `<p class="small dim" style="margin:0">尚未填写。到「内容 → 活动介绍」写一段，前台首页与这里会一起更新。</p>`
+      }
     </div>
 
     <div class="card">
@@ -390,6 +682,8 @@ function worksTab(subs) {
 
 /* ------------------------------ 评审 ------------------------------ */
 
+const reviewDone = (r) => Boolean(r) && (r.status === "submitted" || r.status === "locked");
+
 function reviewTab(reviews, profiles, subs) {
   const judges = profiles.filter((p) => p.role === "judge" || p.role === "admin");
   const works = subs.filter((s) => s.status === "passed" || s.status === "public");
@@ -403,13 +697,13 @@ function reviewTab(reviews, profiles, subs) {
   const rmap = new Map(reviews.map((r) => [`${r.submission_id}:${r.judge_uid}`, r]));
   const countFor = (sid) => reviews.filter((r) => r.submission_id === sid).length;
   const lowCoverage = works.filter((s) => countFor(s.id) < cap);
-  const doneCount = reviews.filter((r) => r.status === "submitted").length;
+  const doneCount = reviews.filter(reviewDone).length;
   const short = (j) => String(j.nickname || j.owner_name || "评委").slice(0, 4);
 
   const variance = works
     .map((s) => {
       const list = reviews
-        .filter((r) => r.submission_id === s.id && r.status === "submitted")
+        .filter((r) => r.submission_id === s.id && reviewDone(r))
         .map((r) => Number(r.total) || 0);
       if (list.length < 2) return null;
       const max = Math.max(...list);
@@ -450,9 +744,9 @@ function reviewTab(reviews, profiles, subs) {
                           ${judges
                             .map((j) => {
                               const r = rmap.get(`${s.id}:${j.owner_id}`);
-                              const cls = r ? (r.status === "submitted" ? "done" : "on") : "";
-                              const label = r ? (r.status === "submitted" ? "✓" : "●") : "+";
-                              const tip = r ? (r.status === "submitted" ? "已提交" : "已分配，未提交") : "点击分配";
+                              const cls = r ? (reviewDone(r) ? "done" : "on") : "";
+                              const label = r ? (reviewDone(r) ? "✓" : "●") : "+";
+                              const tip = r ? (reviewDone(r) ? "已提交" : "已分配，未提交") : "点击分配";
                               return `<td class="center"><button class="assign-cell ${cls}" type="button"
                                 data-assign="${s.id}" data-judge="${j.owner_id}"
                                 aria-label="${esc(s.title)} 分配给 ${esc(j.nickname || "评委")}"
@@ -517,7 +811,7 @@ function reviewTab(reviews, profiles, subs) {
           ? [...byJudge.entries()]
               .map(([uid, list]) => {
                 const p = profiles.find((x) => x.owner_id === uid);
-                const done = list.filter((r) => r.status === "submitted").length;
+                const done = list.filter(reviewDone).length;
                 const pct = Math.round((done / list.length) * 100);
                 return `<div style="margin-bottom:14px">
                   <div class="row-between" style="margin-bottom:5px">
@@ -539,7 +833,7 @@ function reviewTab(reviews, profiles, subs) {
           ? `<div class="tbl-wrap"><table class="tbl">
         <thead><tr><th>作品</th><th>评委</th><th>总分</th><th>提交时间</th><th></th></tr></thead>
         <tbody>${reviews
-          .filter((r) => r.status === "submitted")
+          .filter(reviewDone)
           .map((r) => {
             const s = subById.get(r.submission_id);
             return `<tr>
