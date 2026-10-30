@@ -305,6 +305,7 @@ export async function render() {
   const base = path.split("?")[0];
   const changed = state.route !== base;
   state.route = base;
+  if (typeof document !== "undefined") document.body.dataset.route = base;
   defaultSeo(base, state.activity || DEFAULT_ACTIVITY);
   const handler = resolveRoute(base);
   const el = document.getElementById("app");
@@ -353,6 +354,9 @@ export function navItems() {
 
 export function shell(content, opts = {}) {
   const items = navItems();
+  const PRIMARY = ["/home", "/rules", "/works", "/results"];
+  const primary = items.filter(([p]) => PRIMARY.includes(p));
+  const more = items.filter(([p]) => !PRIMARY.includes(p));
   const active = state.route;
   const isOn = (p) => active === p || (p !== "/" && active.startsWith(p + "/"));
   const user = state.session?.user;
@@ -389,9 +393,49 @@ export function shell(content, opts = {}) {
     </div>
   </header>
   <main class="${opts.wide ? "wide" : ""}">${content}</main>
-  <nav class="mobile-nav">
-    ${items.map(([p, t]) => `<a href="#${p}" class="${isOn(p) ? "active" : ""}">${t}</a>`).join("")}
-  </nav>`;
+  <nav class="mobile-nav" aria-label="移动端导航">
+    ${primary
+      .map(
+        ([p, t]) =>
+          `<a href="#${p}" class="${isOn(p) ? "active" : ""}" ${isOn(p) ? 'aria-current="page"' : ""}>${t}</a>`
+      )
+      .join("")}
+    ${
+      more.length
+        ? `<button class="more-btn" type="button" data-more-toggle aria-expanded="false" aria-controls="more-sheet">更多</button>`
+        : ""
+    }
+  </nav>
+  ${
+    more.length
+      ? `<div class="more-sheet" id="more-sheet" hidden>
+          <div class="more-panel" role="dialog" aria-modal="true" aria-label="更多入口" tabindex="-1">
+            <div class="more-head">
+              <span class="mono">MORE</span>
+              <button class="more-close" type="button" data-more-close aria-label="关闭">×</button>
+            </div>
+            <div class="more-grid">
+              ${more
+                .map(
+                  ([p, t]) =>
+                    `<a href="#${p}" class="${isOn(p) ? "active" : ""}" ${isOn(p) ? 'aria-current="page"' : ""}>${t}</a>`
+                )
+                .join("")}
+            </div>
+          </div>
+        </div>`
+      : ""
+  }`;
+}
+
+/** 统一空状态：说明 + 下一步动作，避免只剩一块空白 */
+export function emptyState({ title, desc, href, action, mark = "EMPTY" }) {
+  return `<div class="empty-state">
+    <div class="empty-mark mono">${esc(mark)}</div>
+    <h3>${esc(title)}</h3>
+    <p>${esc(desc)}</p>
+    ${href ? `<a class="btn btn-sm" href="${href}">${esc(action || "去看看")}</a>` : ""}
+  </div>`;
 }
 
 export function bindShell() {
@@ -405,6 +449,32 @@ export function bindShell() {
       toast("已退出登录", "ok");
       navigate("/home");
     };
+  }
+
+  const moreBtn = document.querySelector("[data-more-toggle]");
+  const sheet = document.getElementById("more-sheet");
+  if (moreBtn && sheet) {
+    const panel = sheet.querySelector(".more-panel");
+    const setOpen = (open) => {
+      sheet.hidden = !open;
+      moreBtn.setAttribute("aria-expanded", String(open));
+      document.body.classList.toggle("more-open", open);
+      if (open) panel.focus();
+      else moreBtn.focus();
+    };
+    moreBtn.onclick = () => setOpen(sheet.hidden);
+    const closeBtn = sheet.querySelector("[data-more-close]");
+    if (closeBtn) closeBtn.onclick = () => setOpen(false);
+    sheet.addEventListener("click", (e) => {
+      if (e.target === sheet) setOpen(false);
+    });
+    sheet.querySelectorAll("a").forEach((a) => a.addEventListener("click", () => setOpen(false)));
+    sheet.addEventListener("keydown", (e) => {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        setOpen(false);
+      }
+    });
   }
 }
 

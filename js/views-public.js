@@ -1,6 +1,6 @@
 import {
   cloud, state, shell, bindShell, navigate, toast, esc, fmtDate, fmtFull, timeLeft, ago,
-  loadMe, loadSession, loadActivity, requireLogin, busy, errMsg, db, unwrap, renderDoc, isStaff, sha256Hex,
+  loadMe, loadSession, loadActivity, requireLogin, busy, errMsg, db, unwrap, renderDoc, isStaff, sha256Hex, emptyState,
 } from "./core.js";
 import {
   TRACKS, trackOf, DIMENSIONS, DEFAULT_ACTIVITY, PARTNER_ROLES, JUDGE_DOC, judgePlainText,
@@ -1211,10 +1211,13 @@ export async function resultsView(el) {
     </header>
     ${
       !subs.length
-        ? `<div class="empty">
-             <p style="margin-bottom:6px">还没有已公示的作品</p>
-             <p class="tiny">提交截止后统一公开，此前作品仅本队与评委可见</p>
-           </div>`
+        ? emptyState({
+             title: "还没有已公示的作品",
+             desc: "提交截止后统一公开，此前作品仅本队与评委可见。",
+             href: "/rules",
+             action: "查看活动规则",
+             mark: "RESULTS / 0",
+           })
         : groups.map((g) => `
           <div class="block">
             <div class="row-between" style="margin-bottom:12px">
@@ -1304,10 +1307,13 @@ export async function worksView(el, path) {
 
     ${
       !all.length
-        ? `<div class="empty">
-             <p style="margin-bottom:6px">还没有已公示的作品</p>
-             <p class="tiny">提交截止后由主办方统一公示；在此之前作品仅本队与评委可见。</p>
-           </div>`
+        ? emptyState({
+             title: "还没有已公示的作品",
+             desc: "提交截止后由主办方统一公示；在此之前作品仅本队与评委可见。",
+             href: "/rules",
+             action: "查看活动规则",
+             mark: "WORKS / 0",
+           })
         : `<div class="wk-bar">
              <div class="row row-wrap" style="gap:6px">
                ${chip("", "全部", all.length)}
@@ -1594,7 +1600,11 @@ export async function judgesView(el) {
   if (state.session && isStaff()) ack = await getJudgeAck(doc).catch(() => null);
 
   el.innerHTML = shell(`
-    <div class="block-head"><h2>评委团队</h2><span class="card-note">${judges.length} 位</span></div>
+    <header class="page-head">
+      <div class="eyebrow">JURY · 2026</div>
+      <h1>评委团队</h1>
+      <div class="page-meta mono">${judges.length} 位 · 按赛道独立评审</div>
+    </header>
 
     <div class="card block">
       <p class="small muted" style="margin:0 0 10px;max-width:72ch">
@@ -1609,10 +1619,13 @@ export async function judgesView(el) {
     ${
       judges.length
         ? `<div class="grid grid-3 block">${judges.map(judgeCard).join("")}</div>`
-        : `<div class="empty block">
-             <p style="margin-bottom:6px">评委名单尚未公布</p>
-             <p class="tiny">名单由主办方在评审开始前录入。</p>
-           </div>`
+        : emptyState({
+             title: "评委名单尚未公布",
+             desc: "名单由主办方在评审开始前录入，届时会展示赛道分工。",
+             href: "/rules",
+             action: "查看评审规则",
+             mark: "JURY / 0",
+           })
     }
 
     <div class="block" id="judge-code">
@@ -1683,7 +1696,11 @@ export async function noticesView(el) {
     list = await listAnnouncements();
   } catch (_) {}
   el.innerHTML = shell(`
-    <div class="block-head"><h2>公告</h2><span class="card-note">${list.length} 条</span></div>
+    <header class="page-head">
+      <div class="eyebrow">NOTICES · 2026</div>
+      <h1>公告</h1>
+      <div class="page-meta mono">${list.length} 条 · 赛程变更与重要通知</div>
+    </header>
     ${list.length
       ? `<div class="card">${list.map((n) => `
           <div class="notice-item">
@@ -1693,7 +1710,13 @@ export async function noticesView(el) {
             </div>
             <p class="small muted" style="white-space:pre-wrap;margin:0">${esc(n.body || "")}</p>
           </div>`).join("")}</div>`
-      : `<div class="empty">暂无公告</div>`}
+      : emptyState({
+          title: "暂无公告",
+          desc: "赛程变更、评审安排与重要通知会在这里发布。",
+          href: "/rules",
+          action: "查看活动规则",
+          mark: "NOTICES / 0",
+        })}
   `);
   bindShell();
 }
