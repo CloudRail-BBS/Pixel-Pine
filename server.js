@@ -1169,6 +1169,139 @@ const server = http.createServer({ maxHeaderSize: 64 * 1024 }, async (req, res) 
     return res.end(req.method === "HEAD" ? undefined : body);
   }
 
+  // IndexNow 密钥文件：必须能从站点根直接访问
+  if (LOCAL_MODE && req.method === "GET") {
+    const key = String(seo.siteSeo().indexNowKey || process.env.PS_SEO_INDEXNOW_KEY || "").trim();
+    if (key && url.pathname === `/${key}.txt`) {
+      res.writeHead(200, {
+        "Content-Type": "text/plain; charset=utf-8",
+        "Cache-Control": "public, max-age=3600",
+      });
+      return res.end(key);
+    }
+  }
+
+  // SEO 诊断与主动推送（仅主办方）
+  if (LOCAL_MODE && url.pathname === "/api/seo/status" && req.method === "GET") {
+    const ctx = local.currentUser(req);
+    if (!ctx || ctx.role !== "admin") return sendJson(res, 403, { error: "forbidden" });
+    const origin = originOf(req);
+    const cfg = seo.siteSeo();
+    const list = seo.publicUrls(origin);
+    const uas = [
+      ["Googlebot", "Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)"],
+      ["Baiduspider", "Mozilla/5.0 (compatible; Baiduspider/2.0; +http://www.baidu.com/search/spider.html)"],
+    ];
+    const bots = await Promise.all(
+      uas.map(async ([name, ua]) => {
+        const ctrl = new AbortController();
+        const timer = setTimeout(() => ctrl.abort(), 6000);
+        try {
+          const r = await fetch(origin + "/", { headers: { "user-agent": ua }, signal: ctrl.signal });
+          const html = await r.text();
+          return {
+            name,
+            status: r.status,
+            title: (html.match(/<title>([^<]*)/) || [])[1] || "",
+            h1: (html.match(/<h1>([^<]*)/) || [])[1] || "",
+            bytes: Buffer.byteLength(html),
+          };
+        } catch (e) {
+          return { name, status: 0, error: e.name === "AbortError" ? "超时" : e.message };
+        } finally {
+          clearTimeout(timer);
+        }
+      })
+    );
+
+    const host = new URL(origin).host;
+    const apex = host.replace(/^www\./, "");
+    let apexCheck = null;
+    if (apex !== host) {
+      try {
+        const r = await fetch(`https://${apex}/`, {
+          method: "GET",
+          redirect: "manual",
+          signal: AbortSignal.timeout(6000),
+        });
+        apexCheck = { host: apex, status: r.status, ok: [200, 301, 302, 308].includes(r.status) };
+      } catch (e) {
+        apexCheck = { host: apex, status: 0, ok: false, error: e.name === "TimeoutError" ? "超时" : "无法访问" };
+      }
+    }
+
+    return sendJson(res, 200, {
+      data: {
+        origin,
+        host,
+        apex: apexCheck,
+        https: origin.startsWith("https://"),
+        urls: list.length,
+        bots,
+        verification: {
+          google: Boolean(process.env.PS_SEO_GOOGLE || cfg.googleCode),
+          baidu: Boolean(process.env.PS_SEO_BAIDU || cfg.baiduCode),
+          bing: Boolean(process.env.PS_SEO_BING || cfg.bingCode),
+          source: process.env.PS_SEO_GOOGLE || process.env.PS_SEO_BAIDU ? "环境变量优先" : "后台设置",
+        },
+        indexNow: {
+          configured: Boolean(cfg.indexNowKey),
+          key: cfg.indexNowKey || "",
+          keyUrl: cfg.indexNowKey ? `${origin}/${cfg.indexNowKey}.txt` : "",
+        },
+        baiduPush: { configured: Boolean(cfg.baiduToken) },
+      },
+    });
+  }
+
+  if (LOCAL_MODE && url.pathname === "/api/seo/push" && req.method === "POST") {
+    const ctx = local.currentUser(req);
+    if (!ctx || ctx.role !== "admin") return sendJson(res, 403, { error: "forbidden" });
+    const origin = originOf(req);
+    const cfg = seo.siteSeo();
+    const urls = seo.publicUrls(origin).map((u) => origin + (u.loc === "/" ? "/" : u.loc));
+    const out = { count: urls.length, indexNow: null, baidu: null };
+    if (!cfg.indexNowKey && !cfg.baiduToken) {
+      return sendJson(res, 400, { error: "先在后台填写 IndexNow Key 或百度推送 Token" });
+    }
+    if (cfg.indexNowKey) {
+      try {
+        const r = await fetch("https://api.indexnow.org/indexnow", {
+          method: "POST",
+          headers: { "content-type": "application/json; charset=utf-8" },
+          body: JSON.stringify({
+            host: new URL(origin).host,
+            key: cfg.indexNowKey,
+            keyLocation: `${origin}/${cfg.indexNowKey}.txt`,
+            urlList: urls,
+          }),
+          signal: AbortSignal.timeout(10000),
+        });
+        out.indexNow = { status: r.status, ok: r.status >= 200 && r.status < 300, body: (await r.text()).slice(0, 300) };
+      } catch (e) {
+        out.indexNow = { ok: false, error: e.name === "TimeoutError" ? "超时" : e.message };
+      }
+    }
+    if (cfg.baiduToken) {
+      try {
+        const host = new URL(origin).host;
+        const r = await fetch(
+          `http://data.zz.baidu.com/urls?site=${encodeURIComponent(host)}&token=${encodeURIComponent(cfg.baiduToken)}`,
+          {
+            method: "POST",
+            headers: { "content-type": "text/plain" },
+            body: urls.join("\n"),
+            signal: AbortSignal.timeout(10000),
+          }
+        );
+        out.baidu = { status: r.status, ok: r.status === 200, body: (await r.text()).slice(0, 300) };
+      } catch (e) {
+        out.baidu = { ok: false, error: e.name === "TimeoutError" ? "超时" : e.message };
+      }
+    }
+    return sendJson(res, 200, { data: out });
+  }
+
   if (LOCAL_MODE && url.pathname.startsWith("/.cloud/local/")) {
     await local.handle(req, res, url);
     return;
@@ -1191,7 +1324,7 @@ if (LOCAL_MODE) {
   local.init(DATA_DIR, path.join(ROOT, "scripts", "seed.json"));
 }
 
-const REQUIRED_FILES = ["index.html", "css/app.css", "js/main.js", "js/core.js", "js/seo.js", "seo-server.js", "assets/og-cover.png"];
+const REQUIRED_FILES = ["index.html", "css/app.css", "js/main.js", "js/core.js", "js/seo.js", "js/faq.js", "seo-server.js", "storage.js", "assets/og-cover.png"];
 const missingFiles = REQUIRED_FILES.filter((f) => !fs.existsSync(path.join(ROOT, f)));
 if (missingFiles.length) {
   console.error(`[pixelsong] 启动失败：缺少必要文件 ${missingFiles.join(", ")}`);

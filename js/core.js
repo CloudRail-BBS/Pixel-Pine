@@ -244,7 +244,7 @@ export function navigate(path, replace = false) {
 }
 export function currentPath() {
   const hash = location.hash.replace(/^#/, "");
-  if (hash) return hash;
+  if (hash.startsWith("/")) return hash;
   const p = location.pathname + location.search;
   if (!p || p === "/" || p === "/index.html") return "/home";
   return p;

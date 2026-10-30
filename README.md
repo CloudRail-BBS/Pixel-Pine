@@ -32,7 +32,9 @@
 
 **主办方**
 - 概览（待办、阶段判定、设奖门槛、服务状态）
-- 报名审核、作品兼容性标记、按赛道派评、结果排名与公示
+- **审核工作台**：待检 / 需修复 / 已通过 / 未通过四类筛选，搜索、批量通过、快捷键（J/K 移动、Enter 审核、1/2/3 结论）；结论、常用理由模板与历史记录一并留档
+- **评委分配矩阵**：作品 × 评委网格，点格分配，覆盖数提示，一键补齐到 3 位；按赛道整批派评；分差 ≥15 分自动预警
+- 结果排名与公示
 - 在线编辑规则页正文（Markdown，保存即生效）
 - 证书颁发（按作品发给全队成员，可撤销）
 - 组织单位管理（主办 / 协办 / 支持，Logo 或文字标，首页分组展示）
@@ -41,6 +43,8 @@
   Token 只留在服务端，也可用 `AFDIAN_USER_ID` / `AFDIAN_TOKEN` 环境变量提供
 - 评委团队管理（头像、职称、负责赛道、公开开关）
 - GitHub / CNKD 登录配置（OAuth 应用、回调地址，密钥只存服务端）
+- **对象存储**：作品包可写入 S3 兼容存储（MinIO / R2 / AWS S3 / 阿里云 OSS），后台可视化配置、测试连接、迁移本地文件；未启用时继续落本地磁盘
+- **SEO 后台**：收录诊断（爬虫抓取、sitemap、验证码）、站长平台验证码、IndexNow 与百度主动推送，全部在「SEO」页完成，无需重启
 - 活动介绍在线编辑，同步用于首页导语与后台概览
 
 ## 技术结构
@@ -135,9 +139,9 @@ server {
 | `PS_DATA_DIR` | 否 | 本地模式数据目录，默认 `/app/data` |
 | `PORT` | 否 | 监听端口，默认 3000 |
 | `PS_PUBLIC_ORIGIN` | 否 | 对外访问地址，如 `https://www.pixelpine.org`；反代没传 `X-Forwarded-Host` 时必填，sitemap 与 OAuth 回调都靠它 |
-| `PS_SEO_GOOGLE` | 否 | Google Search Console 的 `google-site-verification` 值 |
-| `PS_SEO_BAIDU` | 否 | 百度搜索资源平台的 `baidu-site-verification` 值 |
-| `PS_SEO_BING` | 否 | Bing 站长工具的 `msvalidate.01` 值 |
+| `PS_SEO_GOOGLE` | 否 | Google 验证码；也可在后台「SEO」页填，环境变量优先 |
+| `PS_SEO_BAIDU` | 否 | 百度验证码；也可在后台「SEO」页填，环境变量优先 |
+| `PS_SEO_BING` | 否 | Bing 验证码；也可在后台「SEO」页填，环境变量优先 |
 
 **邮件、人机验证、病毒扫描、CNKD 登录都不在这里配**：登录主办方后台 →「设置」，填完保存立即生效，密钥只存服务端。未配置时对应功能自动降级：极验跳过验证、CNKD 按钮不显示、病毒扫描显示未启用，登录与提交仍可用。`/api/health` 会如实报告状态。
 
@@ -219,31 +223,65 @@ SMTP 常见服务商参数：
 2. 提交截止后，队长在页面上点一次「发布到评审」，文件复制到 `shared/`，评委才能下载；
 3. 复制完成后其他登录用户也可下载——这正好对应规则中的「私密提交、截止后公开」。
 
+## 对象存储（可选）
+
+默认作品包落在本机 `data/files`，开箱即用。文件多、要接 CDN 或不想让数据卷膨胀时，可在「后台 → 设置 → 对象存储」切换，**不需要改环境变量或重启**。
+
+| 字段 | 说明 |
+|---|---|
+| Endpoint | S3 服务地址，不带结尾斜杠 |
+| Region | AWS 区域；R2 填 `auto`；OSS 填 `oss-cn-hangzhou` 这类 |
+| Bucket / 前缀 | 实际 key 为 `前缀/站内路径`，默认 `pixelsong` |
+| Access Key / Secret Key | 建议用只授权该 bucket 的子账号 |
+| 公开访问前缀 | 可选，仅用于未来的 CDN；不改变权限 |
+| Path-style | MinIO 一般要勾选；R2 / AWS / OSS 不勾 |
+
+常用组合：
+
+```text
+MinIO     http://127.0.0.1:9000         region=us-east-1      pathStyle=✓
+R2        https://<account>.r2.cloudflarestorage.com   region=auto   pathStyle=✗
+AWS S3    https://s3.us-east-1.amazonaws.com           region=us-east-1  pathStyle=✗
+阿里云 OSS https://oss-cn-hangzhou.aliyuncs.com         region=oss-cn-hangzhou  pathStyle=✗
+```
+
+配置顺序：填表 → **测试连接**（写入并回读一个临时对象）→ **保存设置** → 需要时点 **迁移本地文件**（已存在的会跳过）。
+
+- 作品包下载默认走站内代理并校验权限；需要直链时由 S3 生成预签名地址，默认 10 分钟
+- 对象存储不可用时上传会明确报错，不会静默丢文件；关闭开关后回退本地磁盘
+- 切换存储后旧文件仍可下载：读取时先查对象存储，404 再回退本地
+- 单文件上限仍是 200 MB，超过请在提交说明里给外链
+
 ## 搜索引擎与 SEO
 
 站点已经按可收录的方式处理，不需要额外的 SSR 服务：
 
 - **干净 URL**：`/rules`、`/works/12`、`/results`，不再依赖 `#/`；旧的 `#/rules` 链接会在启动时自动换成 `/rules`
-- **`/robots.txt`**：放行公开页，屏蔽 `/admin`、`/me`、`/team`、`/judge`、`/login`、`/certificate` 等私有路径
+- **后台「SEO」页**：收录诊断（真实 Googlebot / Baiduspider UA 抓取、sitemap 条数、验证码状态）、三家站长平台验证码、IndexNow Key、百度推送 Token，保存即生效
+- **主动推送**：一键把 sitemap 里的全部 URL 推给 IndexNow（Bing / Yandex / Naver）与百度；IndexNow Key 会自动暴露为 `/<key>.txt`
+- **`/robots.txt`**：放行公开页，屏蔽 `/admin`、`/me`、`/team`、`/judge`、`/login`、`/certificate` 等私有路径，并带 `Host` 与 `Sitemap`
 - **`/sitemap.xml`**：动态生成，包含首页、规则、作品列表、每件已公示作品、结果、评委、公告、鸣谢，带 `lastmod`
 - **爬虫快照**：Googlebot / Baiduspider / Bingbot 等访问公开路径时，服务端直接返回带正文的静态 HTML（标题、关键信息、赛道、赛程、规则全文、作品列表与详情、排名），不依赖 JS 渲染
 - **页面 head**：每个路径有独立的 title / description / canonical / Open Graph / Twitter Card，私有页带 `noindex` 与 `X-Robots-Tag`
-- **结构化数据**：首页 Event、作品详情 CreativeWork、列表页 CollectionPage / ItemList
+- **结构化数据**：首页 Event + Organization + WebSite + FAQPage、作品详情 CreativeWork、列表页 CollectionPage / ItemList
 - **分享封面**：`assets/og-cover.png`（1200×630）
 
 上线后：
 
-1. 在 Google Search Console / 百度搜索资源平台 / Bing 站长工具添加站点，把验证码填进 `.env` 的 `PS_SEO_*`
-2. 提交 `https://你的域名/sitemap.xml`
-3. 用 `curl -A "Googlebot" https://你的域名/rules | head` 检查快照是否带正文
+1. 进「后台 → SEO」，先看**收录诊断**：站点地址、Sitemap、两种爬虫抓取、验证码四项应全绿
+2. 在 Google Search Console / 百度搜索资源平台 / Bing 站长工具添加站点，把验证码粘回后台并保存
+3. 提交 `https://你的域名/sitemap.xml`，再点「推送全部页面」
+4. 用 `curl -A "Googlebot" https://你的域名/rules | head` 复核快照
+
+**首页一直不收录时**，按这个顺序排查：域名是否 HTTPS 可访问 → 诊断里爬虫是否 200 且有 h1 → canonical 是否等于实际域名 → 站长平台是否验证通过 → 是否已提交 sitemap。新域名没有外链时，Google 通常要 1–4 周；百度对未备案或境外主机更慢，这不是前端能绕过的。
 
 `robots` 只是约定，不是访问控制；`/admin` 仍然要靠账号鉴权。
 
 ## 校验
 
 ```bash
-npm run preflight     # 部署前 8 项检查
-npm run smoke         # 部署后 11 项线上检查（可传 URL 参数）
+npm run preflight     # 部署前自检：文件、配置、页面可解析
+npm run smoke         # 部署后线上检查（20+ 项，可传 URL 参数）
 ```
 
 `smoke` 会比对本地 `package.json` 与线上 `/api/health` 的版本号——不一致说明发布没生效。

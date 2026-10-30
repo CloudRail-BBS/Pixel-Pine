@@ -14,6 +14,7 @@ const fs = require("fs");
 const path = require("path");
 const crypto = require("crypto");
 const { sendMail } = require("./mailer.js");
+const storage = require("./storage.js");
 
 const TABLES = [
   "profiles", "users", "sessions", "teams", "team_members", "submissions",
@@ -37,6 +38,26 @@ const DEFAULT_SETTINGS = {
   github: { enabled: false, clientId: "", clientSecret: "", redirectUri: "" },
   // 捐助渠道：首页展示入口；afdian* 用于从爱发电开放平台拉取赞助记录
   donate: { enabled: false, url: "", title: "", note: "", afdianUserId: "", afdianToken: "" },
+  // 作品包对象存储（S3 兼容）；未启用时继续落本地磁盘
+  storage: {
+    enabled: false,
+    endpoint: "",
+    region: "us-east-1",
+    bucket: "",
+    accessKey: "",
+    secretKey: "",
+    prefix: "pixelsong",
+    publicBaseUrl: "",
+    pathStyle: false,
+  },
+  // 搜索引擎：验证码与主动推送
+  seo: {
+    googleCode: "",
+    baiduCode: "",
+    bingCode: "",
+    indexNowKey: "",
+    baiduToken: "",
+  },
 };
 
 let DATA_DIR = "";
@@ -504,6 +525,7 @@ function signPath(p, ttl) {
 
 async function handleFile(req, res, url, ctx) {
   const p = safePath(url.searchParams.get("path"));
+  const sc = storage.cfgOf(getSettings().storage);
 
   if (req.method === "GET") {
     if (!p) return sendJson(res, 400, { error: "bad_path" });
@@ -513,6 +535,26 @@ async function handleFile(req, res, url, ctx) {
       exp && sig && safeEqual(sig, crypto.createHmac("sha256", SECRET).update(`${p}:${exp}`).digest("hex").slice(0, 32));
     if (!signed && !canReadFile(ctx, p)) return sendJson(res, 403, { error: "forbidden" });
     if (signed && exp * 1000 < Date.now()) return sendJson(res, 410, { error: "expired" });
+
+    if (storage.ready(sc)) {
+      try {
+        const up = await storage.get(sc, p, req.headers.range);
+        const headers = {
+          "content-type": up.headers["content-type"] || url.searchParams.get("type") || "application/octet-stream",
+          "cache-control": "private, max-age=60",
+          "content-disposition": `attachment; filename*=UTF-8''${encodeURIComponent(path.basename(p))}`,
+          "accept-ranges": "bytes",
+        };
+        if (up.headers["content-length"]) headers["content-length"] = up.headers["content-length"];
+        if (up.headers["content-range"]) headers["content-range"] = up.headers["content-range"];
+        res.writeHead(up.statusCode === 206 ? 206 : 200, headers);
+        return up.pipe(res);
+      } catch (e) {
+        // 对象存储里没有时继续找本地，方便未迁移的旧文件
+        if (e.statusCode !== 404) return sendJson(res, 502, { error: `对象存储读取失败：${e.message}` });
+      }
+    }
+
     const file = path.join(FILE_DIR, p);
     if (!file.startsWith(FILE_DIR + path.sep) || !fs.existsSync(file)) {
       return sendJson(res, 404, { error: "not_found" });
@@ -537,10 +579,18 @@ async function handleFile(req, res, url, ctx) {
     } catch (e) {
       return sendJson(res, 413, { error: "too_large" });
     }
+    if (storage.ready(sc)) {
+      try {
+        const out = await storage.put(sc, p, buf, req.headers["content-type"]);
+        return sendJson(res, 200, { data: { path: p, size: out.size, storage: "object" } });
+      } catch (e) {
+        return sendJson(res, 502, { error: `对象存储写入失败：${e.message}` });
+      }
+    }
     const file = path.join(FILE_DIR, p);
     fs.mkdirSync(path.dirname(file), { recursive: true });
     fs.writeFileSync(file, buf);
-    return sendJson(res, 200, { data: { path: p, size: buf.length } });
+    return sendJson(res, 200, { data: { path: p, size: buf.length, storage: "local" } });
   }
 
   if (req.method === "POST" && url.pathname.endsWith("/file/copy")) {
@@ -550,6 +600,14 @@ async function handleFile(req, res, url, ctx) {
     const to = safePath(body.to);
     if (!from || !to || !canReadFile(ctx, from) || !canWriteFile(ctx, to)) {
       return sendJson(res, 403, { error: "forbidden" });
+    }
+    if (storage.ready(sc)) {
+      try {
+        await storage.copy(sc, from, to);
+        return sendJson(res, 200, { data: { path: to, storage: "object" } });
+      } catch (e) {
+        return sendJson(res, 502, { error: `对象存储复制失败：${e.message}` });
+      }
     }
     const src = path.join(FILE_DIR, from);
     if (!fs.existsSync(src)) return sendJson(res, 404, { error: "not_found" });
@@ -565,6 +623,11 @@ async function handleFile(req, res, url, ctx) {
     for (const raw of body.paths || []) {
       const p2 = safePath(raw);
       if (!p2 || !canWriteFile(ctx, p2)) continue;
+      if (storage.ready(sc)) {
+        try {
+          await storage.remove(sc, p2);
+        } catch (_) {}
+      }
       try {
         fs.unlinkSync(path.join(FILE_DIR, p2));
       } catch (_) {}
@@ -577,6 +640,9 @@ async function handleFile(req, res, url, ctx) {
     const body = await readJson(req);
     const p2 = safePath(body.path);
     if (!p2 || !canReadFile(ctx, p2)) return sendJson(res, 403, { error: "forbidden" });
+    if (storage.ready(sc)) {
+      return sendJson(res, 200, { data: { signedUrl: storage.presignGet(sc, p2, body.ttl || 600) } });
+    }
     const { exp, sig } = signPath(p2, body.ttl);
     return sendJson(res, 200, {
       data: { signedUrl: `/.cloud/local/file?path=${encodeURIComponent(p2)}&exp=${exp}&sig=${sig}` },
@@ -1196,6 +1262,16 @@ function maskSettings() {
       afdianToken: "",
       hasAfdianToken: Boolean(s.donate && s.donate.afdianToken),
     },
+    storage: {
+      ...(s.storage || {}),
+      secretKey: "",
+      hasSecretKey: Boolean(s.storage && s.storage.secretKey),
+    },
+    seo: {
+      ...(s.seo || {}),
+      baiduToken: "",
+      hasBaiduToken: Boolean(s.seo && s.seo.baiduToken),
+    },
   };
 }
 
@@ -1226,11 +1302,11 @@ async function handleSettings(req, res, url, ctx) {
     const body = await readJson(req);
     const s = getSettings();
     const patch = body || {};
-    for (const key of ["smtp", "geetest", "virustotal", "cnkd", "github", "donate"]) {
+    for (const key of ["smtp", "geetest", "virustotal", "cnkd", "github", "donate", "storage", "seo"]) {
       if (!patch[key] || typeof patch[key] !== "object") continue;
       const next = { ...s[key] };
       for (const [k, v] of Object.entries(patch[key])) {
-        if (k === "pass" || k === "captchaKey" || k === "apiKey" || k === "clientSecret" || k === "afdianToken") {
+        if (k === "pass" || k === "captchaKey" || k === "apiKey" || k === "clientSecret" || k === "afdianToken" || k === "secretKey" || k === "baiduToken") {
           if (v === "__clear__") next[k] = "";
           else if (typeof v === "string" && v.trim()) next[k] = v.trim();
           continue;
@@ -1247,6 +1323,62 @@ async function handleSettings(req, res, url, ctx) {
   return sendJson(res, 405, { error: { message: "method_not_allowed" } });
 }
 
+/* ------------------------------ 对象存储 ------------------------------ */
+
+function mimeOf(name) {
+  const ext = path.extname(name).toLowerCase();
+  return (
+    {
+      ".zip": "application/zip",
+      ".jar": "application/java-archive",
+      ".7z": "application/x-7z-compressed",
+      ".rar": "application/vnd.rar",
+      ".png": "image/png",
+      ".jpg": "image/jpeg",
+      ".jpeg": "image/jpeg",
+      ".gif": "image/gif",
+      ".webp": "image/webp",
+      ".mp4": "video/mp4",
+      ".webm": "video/webm",
+      ".txt": "text/plain; charset=utf-8",
+      ".json": "application/json",
+      ".pdf": "application/pdf",
+    }[ext] || "application/octet-stream"
+  );
+}
+
+function walkFiles(dir, base = "") {
+  const out = [];
+  for (const ent of fs.readdirSync(dir, { withFileTypes: true })) {
+    const rel = base ? `${base}/${ent.name}` : ent.name;
+    if (ent.isDirectory()) out.push(...walkFiles(path.join(dir, ent.name), rel));
+    else out.push(rel);
+  }
+  return out;
+}
+
+async function migrateFilesToStorage() {
+  const sc = storage.cfgOf(getSettings().storage);
+  if (!storage.ready(sc)) throw new Error("对象存储未启用或配置不完整");
+  const files = walkFiles(FILE_DIR);
+  const out = { total: files.length, uploaded: 0, skipped: 0, failed: [] };
+  for (const rel of files) {
+    try {
+      await storage.head(sc, rel);
+      out.skipped++;
+      continue;
+    } catch (_) {}
+    try {
+      const buf = fs.readFileSync(path.join(FILE_DIR, rel));
+      await storage.put(sc, rel, buf, mimeOf(rel));
+      out.uploaded++;
+    } catch (e) {
+      out.failed.push({ path: rel, error: e.message });
+    }
+  }
+  return out;
+}
+
 /* ------------------------------ 入口 ------------------------------ */
 
 async function handle(req, res, url) {
@@ -1257,6 +1389,55 @@ async function handle(req, res, url) {
     if (url.pathname.startsWith("/.cloud/local/auth/")) {
       await handleAuth(req, res, url);
       return true;
+    }
+    if (url.pathname.startsWith("/.cloud/local/storage/")) {
+      if (!isAdmin(ctx)) return sendJson(res, 403, { error: { message: "只有主办方可以配置存储" } });
+      const saved = getSettings().storage || {};
+      if (url.pathname.endsWith("/test") && req.method === "POST") {
+        const body = await readJson(req);
+        const patch = body.storage || {};
+        const cfg = { ...saved, ...patch };
+        if (!cfg.secretKey) cfg.secretKey = saved.secretKey;
+        try {
+          const out = await storage.test(cfg);
+          return sendJson(res, 200, { data: { ok: true, ...out } });
+        } catch (e) {
+          return sendJson(res, 502, { error: { message: e.message } });
+        }
+      }
+      if (url.pathname.endsWith("/migrate") && req.method === "POST") {
+        try {
+          const out = await migrateFilesToStorage();
+          return sendJson(res, 200, { data: out });
+        } catch (e) {
+          return sendJson(res, 502, { error: { message: e.message } });
+        }
+      }
+      if (url.pathname.endsWith("/stats") && req.method === "GET") {
+        const sc = storage.cfgOf(saved);
+        let count = 0;
+        let bytes = 0;
+        try {
+          for (const rel of walkFiles(FILE_DIR)) {
+            count++;
+            try {
+              bytes += fs.statSync(path.join(FILE_DIR, rel)).size;
+            } catch (_) {}
+          }
+        } catch (_) {}
+        return sendJson(res, 200, {
+          data: {
+            enabled: Boolean(sc.enabled),
+            ready: storage.ready(sc),
+            endpoint: sc.endpoint,
+            bucket: sc.bucket,
+            prefix: sc.prefix,
+            localFiles: count,
+            localBytes: bytes,
+          },
+        });
+      }
+      return sendJson(res, 404, { error: { message: "not_found" } });
     }
     if (url.pathname === "/.cloud/local/db") {
       await handleDb(req, res, ctx);

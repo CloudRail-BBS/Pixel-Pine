@@ -3,6 +3,8 @@
  * 只操作 head，不依赖业务模块，避免和 core.js 形成循环引用。
  */
 
+import { FAQS } from "./faq.js";
+
 const SITE = "像素松";
 const DEFAULT_DESC =
   "《我的世界》×《铁锈战争》「像素松」限时创作活动：72 小时组队创作，四条赛道独立评审，全程线上。报名、组队、提交、评审与结果公示都在这里。";
@@ -106,12 +108,11 @@ export function setSeo(opt = {}) {
   setJsonLd(opt.jsonLd || null);
 }
 
-function eventLd(activity) {
+function homeLd(activity) {
   const a = activity || {};
-  const ld = {
-    "@context": "https://schema.org",
+  const event = {
     "@type": "Event",
-    name: `${SITE} · ${a.theme || "限时创作"}`,
+    name: `${SITE} · 我的世界 × 铁锈战争 限时创作`,
     description: DEFAULT_DESC,
     eventAttendanceMode: "https://schema.org/OnlineEventAttendanceMode",
     eventStatus: "https://schema.org/EventScheduled",
@@ -121,16 +122,31 @@ function eventLd(activity) {
     url: absolute("/"),
     inLanguage: "zh-CN",
   };
-  if (a.eventStart) ld.startDate = a.eventStart;
-  if (a.submitDeadline) ld.endDate = a.submitDeadline;
-  return ld;
+  if (a.eventStart) event.startDate = a.eventStart;
+  if (a.submitDeadline) event.endDate = a.submitDeadline;
+  return {
+    "@context": "https://schema.org",
+    "@graph": [
+      event,
+      { "@type": "Organization", name: "像素松组委会", url: absolute("/"), logo: absolute("/assets/logo.svg") },
+      { "@type": "WebSite", name: SITE, url: absolute("/"), inLanguage: "zh-CN" },
+      {
+        "@type": "FAQPage",
+        mainEntity: FAQS.map((f) => ({
+          "@type": "Question",
+          name: f.q,
+          acceptedAnswer: { "@type": "Answer", text: f.a },
+        })),
+      },
+    ],
+  };
 }
 
 /** 路由切换时的兜底 meta；具体页面可以在加载完数据后再调用 setSeo 覆盖 */
 export function defaultSeo(route, activity) {
   const base = String(route || "/home").split("?")[0];
   if (base === "/" || base === "/home") {
-    setSeo({ path: "/", desc: DEFAULT_DESC, jsonLd: eventLd(activity) });
+    setSeo({ path: "/", desc: DEFAULT_DESC, jsonLd: homeLd(activity) });
     return;
   }
   if (base === "/rules") {

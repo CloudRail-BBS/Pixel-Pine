@@ -14,6 +14,7 @@ import {
 import { verifyCaptcha } from "./geetest.js";
 import { cnkdConfig, startCnkdLogin } from "./cnkd.js";
 import { setSeo } from "./seo.js";
+import { FAQS } from "./faq.js";
 import { signedDownload } from "./upload.js";
 
 let pendingOtp = null;
@@ -222,6 +223,20 @@ export async function homeView(el) {
     <section class="sec">
       <div class="sec-head">
         <span class="sec-no mono">03</span>
+        <div class="sec-title"><h2>常见问题</h2><p>报名、提交与评审</p></div>
+      </div>
+      <div class="faq-list">
+        ${FAQS.map((f, i) => `
+          <details class="faq-item" ${i === 0 ? "open" : ""}>
+            <summary><span class="faq-no mono">0${i + 1}</span><span>${esc(f.q)}</span></summary>
+            <p>${esc(f.a)}</p>
+          </details>`).join("")}
+      </div>
+    </section>
+
+    <section class="sec">
+      <div class="sec-head">
+        <span class="sec-no mono">04</span>
         <div class="sec-title"><h2>公告</h2><p>赛程变更与重要通知</p></div>
         <a class="sec-link mono" href="#/notices">ALL →</a>
       </div>
@@ -292,7 +307,7 @@ function partnerWall(list, title, note) {
   return `
     <section class="sec" id="orgs">
       <div class="sec-head">
-        <span class="sec-no mono">04</span>
+        <span class="sec-no mono">05</span>
         <div class="sec-title"><h2>${esc(title)}</h2><p>${esc(note || "")}</p></div>
       </div>
       <div class="org-wall">

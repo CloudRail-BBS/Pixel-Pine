@@ -27,6 +27,23 @@ const DIMENSIONS = [
   ["表现力与平衡性", 10],
 ];
 
+const FAQS = [
+  ["谁可以参加？", "个人或 3–5 人团队都可以，全程线上，不设路演。每人只能参加 1 个作品，不得跨队协助。"],
+  ["需要准备什么？", "正版游戏环境、能独立运行的作品包（≤200 MB）、3–5 分钟演示视频，以及依赖与许可证清单。"],
+  ["主题什么时候公布？", "赛前公布方向性主题词供构思，开幕时公布正式题目与特别要求，开发计时从开幕开始。"],
+  ["可以提交几件作品？", "每人只能参加 1 个作品；同一作品不得跨赛道重复提交。截止前可重复提交，以最后一次为准。"],
+  ["怎么评审？", "五个维度加权打分，评委独立评审；总分低于 60 分不授予等级奖，同分按可运行性、创意、玩法依次排序。"],
+  ["结果什么时候公布？", "评审截止后统一公示，公示 24 小时无异议后颁奖；全程线上，不设现场路演。"],
+];
+
+function siteSeo() {
+  try {
+    return local.getSettings().seo || {};
+  } catch (_) {
+    return {};
+  }
+}
+
 const PRIVATE_RE = /^\/(admin|me|team|work|judge|login|certificate|receipt|cnkd|verify)(\/|$)/;
 
 const isBot = (ua) => BOT_RE.test(String(ua || ""));
@@ -129,18 +146,42 @@ function pageMeta(pathname, origin) {
     type: "website",
     ld: {
       "@context": "https://schema.org",
-      "@type": "Event",
-      name: `${SITE} · ${a.theme || "限时创作"}`,
-      description: DEFAULT_DESC,
-      eventAttendanceMode: "https://schema.org/OnlineEventAttendanceMode",
-      eventStatus: "https://schema.org/EventScheduled",
-      startDate: a.eventStart,
-      endDate: a.submitDeadline,
-      location: { "@type": "VirtualLocation", url: origin + "/" },
-      organizer: { "@type": "Organization", name: `${SITE}组委会`, url: origin + "/" },
-      image: [origin + OG_IMAGE],
-      url: origin + "/",
-      inLanguage: "zh-CN",
+      "@graph": [
+        {
+          "@type": "Event",
+          name: `${SITE} · 我的世界 × 铁锈战争 限时创作`,
+          description: DEFAULT_DESC,
+          eventAttendanceMode: "https://schema.org/OnlineEventAttendanceMode",
+          eventStatus: "https://schema.org/EventScheduled",
+          startDate: a.eventStart,
+          endDate: a.submitDeadline,
+          location: { "@type": "VirtualLocation", url: origin + "/" },
+          organizer: { "@type": "Organization", name: `${SITE}组委会`, url: origin + "/" },
+          image: [origin + OG_IMAGE],
+          url: origin + "/",
+          inLanguage: "zh-CN",
+        },
+        {
+          "@type": "Organization",
+          name: `${SITE}组委会`,
+          url: origin + "/",
+          logo: origin + "/assets/logo.svg",
+        },
+        {
+          "@type": "WebSite",
+          name: SITE,
+          url: origin + "/",
+          inLanguage: "zh-CN",
+        },
+        {
+          "@type": "FAQPage",
+          mainEntity: FAQS.map(([q, ans]) => ({
+            "@type": "Question",
+            name: q,
+            acceptedAnswer: { "@type": "Answer", text: ans },
+          })),
+        },
+      ],
     },
   };
   if (p === "/" || p === "/home") return home;
@@ -276,10 +317,11 @@ function pageMeta(pathname, origin) {
 }
 
 function verificationTags() {
+  const c = siteSeo();
   const items = [
-    ["google-site-verification", process.env.PS_SEO_GOOGLE],
-    ["baidu-site-verification", process.env.PS_SEO_BAIDU],
-    ["msvalidate.01", process.env.PS_SEO_BING],
+    ["google-site-verification", process.env.PS_SEO_GOOGLE || c.googleCode],
+    ["baidu-site-verification", process.env.PS_SEO_BAIDU || c.baiduCode],
+    ["msvalidate.01", process.env.PS_SEO_BING || c.bingCode],
   ].filter(([, v]) => v);
   return items.map(([k, v]) => `<meta name="${k}" content="${esc(v)}">`).join("\n");
 }
@@ -300,6 +342,7 @@ function headTags(meta, origin) {
     `<meta name="twitter:title" content="${esc(meta.title)}">`,
     `<meta name="twitter:description" content="${esc(meta.desc)}">`,
     `<meta name="twitter:image" content="${esc(origin + OG_IMAGE)}">`,
+    `<meta name="applicable-device" content="pc,mobile">`,
   ];
   const verify = verificationTags();
   if (verify) tags.push(verify);
@@ -452,8 +495,9 @@ function contentFor(pathname) {
 
   if (p === "/" || p === "/home") {
     return `
-      <h1>${esc(SITE)} · ${esc(a.theme || "限时创作")}</h1>
-      <p>${esc(DEFAULT_DESC)}</p>
+      <h1>像素松 · 我的世界 × 铁锈战争 限时创作</h1>
+      <p>像素松是一场围绕《我的世界》与《铁锈战争》的限时创作活动：72 小时，一队 3–5 人，做出一个能装进游戏、别人下载后能跑起来的模组或地图。全程线上，不设路演，按赛道独立评审。</p>
+      <p>比赛分四条赛道：MC 模组、MC 地图、RW 模组、RW 地图。报名、组队、作品提交、兼容性审核、评委打分与结果公示都在本平台完成。${a.theme ? `本期主题：${esc(a.theme)}。` : ""}</p>
       ${factsHtml()}
       <h2>四条赛道</h2>
       <ul>${TRACKS.map((t) => `<li>赛道 ${t.code} · ${esc(t.name)}（${esc(t.game)}）：${esc(t.note)}</li>`).join("")}</ul>
@@ -467,6 +511,8 @@ function contentFor(pathname) {
       </ul>
       <h2>怎么评</h2>
       <ul>${DIMENSIONS.map(([n, w]) => `<li>${esc(n)}：${w}%</li>`).join("")}</ul>
+      <h2>常见问题</h2>
+      ${FAQS.map(([q, ans]) => `<h3>${esc(q)}</h3><p>${esc(ans)}</p>`).join("")}
       <h2>已公示作品</h2>
       ${worksListHtml(20)}
     `;
@@ -599,9 +645,14 @@ function venueLabel() {
 /* ------------------------------ robots / sitemap ------------------------------ */
 
 function robotsTxt(origin) {
+  let host = "";
+  try {
+    host = new URL(origin).host;
+  } catch (_) {}
   return [
     "User-agent: *",
     "Allow: /",
+    ...(host ? [`Host: ${host}`] : []),
     "Disallow: /admin",
     "Disallow: /me",
     "Disallow: /team",
@@ -622,13 +673,14 @@ function robotsTxt(origin) {
   ].join("\n");
 }
 
-function sitemapXml(origin) {
+/** 所有可公开收录的 URL，sitemap 与主动推送共用 */
+function publicUrls(origin) {
   const a = activity();
   const doc = rulesDoc();
   const works = publicWorks();
   const revs = reviews().filter((r) => r.status === "submitted" || r.status === "locked");
   const latestReview = revs.reduce((m, r) => Math.max(m, new Date(r.updated_at || 0).getTime() || 0), 0);
-  const urls = [
+  return [
     { loc: "/", lastmod: iso(activityUpdated() || a.submitDeadline), priority: "1.0", changefreq: "daily" },
     { loc: "/rules", lastmod: iso(doc && doc.updated_at), priority: "0.8", changefreq: "weekly" },
     { loc: "/works", lastmod: iso(works.reduce((m, w) => Math.max(m, new Date(w.created_at || 0).getTime() || 0), 0)), priority: "0.9", changefreq: "daily" },
@@ -643,6 +695,10 @@ function sitemapXml(origin) {
     { loc: "/notices", lastmod: iso((announcements()[0] || {}).created_at), priority: "0.6", changefreq: "weekly" },
     { loc: "/sponsors", lastmod: iso(activityUpdated()), priority: "0.4", changefreq: "monthly" },
   ].filter((u) => u.loc);
+}
+
+function sitemapXml(origin) {
+  const urls = publicUrls(origin);
   const body = urls
     .map(
       (u) =>
@@ -658,7 +714,9 @@ module.exports = {
   isBot,
   robotsTxt,
   sitemapXml,
+  publicUrls,
   injectSeo,
   renderBotPage,
   pageMeta,
+  siteSeo,
 };

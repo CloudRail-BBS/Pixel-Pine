@@ -32,6 +32,7 @@ const TABS = [
   { key: "partners", label: "单位" },
   { key: "sponsors", label: "赞助者" },
   { key: "settings", label: "设置" },
+  { key: "seo", label: "SEO" },
   { key: "appeals", label: "申诉" },
   { key: "system", label: "系统" },
 ];
@@ -100,6 +101,7 @@ export async function adminView(el, path) {
       case "partners": return partnersTab(partners);
       case "sponsors": return sponsorsTab(sponsorList);
       case "settings": return settingsTab(siteCfg, authCfg);
+      case "seo": return seoTab(siteCfg);
       case "appeals": return appealsTab(appeals);
       case "system": return systemTab(health, profiles);
       default: return overviewTab({ teams, subs, reviews, counts, reviewed, pendingAppeals, pendingTeams, pendingWorks, health, members, profiles, sigs, intro });
@@ -107,6 +109,7 @@ export async function adminView(el, path) {
   })();
 
   el.innerHTML = shell(`
+    <button class="skip-link" id="skip-main" type="button">跳到主要内容</button>
     <div class="block-head"><h2>主办方后台</h2>
       <span class="card-note">${esc(state.activity?.theme || "")} · v${esc(health?.version || "—")}</span>
     </div>
@@ -275,83 +278,271 @@ function teamsTab(teams, members) {
 
 /* ------------------------------ 作品 ------------------------------ */
 
+const REVIEW_ORDER = { submitted: 0, fix_required: 1, passed: 2, public: 3, rejected: 4, disqualified: 5, draft: 6 };
+
 function worksTab(subs) {
+  const pending = subs.filter((s) => s.status === "submitted").length;
+  const fix = subs.filter((s) => s.status === "fix_required").length;
+  const passed = subs.filter((s) => s.status === "passed" || s.status === "public").length;
+  const failed = subs.filter((s) => s.status === "rejected" || s.status === "disqualified").length;
+  const rows = subs
+    .slice()
+    .sort(
+      (a, b) =>
+        (REVIEW_ORDER[a.status] ?? 9) - (REVIEW_ORDER[b.status] ?? 9) ||
+        new Date(b.created_at || 0) - new Date(a.created_at || 0)
+    );
+
+  const scanOf = (s) => {
+    const sc = s.scan;
+    if (!sc) return { label: "未扫描", cls: "tag" };
+    const map = {
+      clean: ["tag-teal", "扫描通过"],
+      malicious: ["tag-red", "检出恶意"],
+      suspicious: ["tag-amber", "可疑"],
+      notfound: ["tag", "未收录"],
+      unavailable: ["tag", "查询失败"],
+    };
+    const [cls, label] = map[sc.status] || ["tag", sc.status || "未知"];
+    return { cls, label, stats: sc.stats };
+  };
+
   return `
+    <div class="review-stats">
+      <div class="rs"><span class="rs-k">待检查</span><b>${pending}</b></div>
+      <div class="rs"><span class="rs-k">需修复</span><b>${fix}</b></div>
+      <div class="rs"><span class="rs-k">已通过</span><b>${passed}</b></div>
+      <div class="rs"><span class="rs-k">未通过</span><b>${failed}</b></div>
+    </div>
+
     <div class="card">
-      <div class="card-head"><h2>作品与兼容性</h2><span class="card-note">${subs.filter((s) => s.status === "submitted").length} 件待检查</span></div>
-      ${subs.length ? `<div class="tbl-wrap"><table class="tbl">
-        <thead><tr><th>作品</th><th>赛道</th><th>版本</th><th>作品包</th><th>扫描</th><th>状态</th><th class="right">操作</th></tr></thead>
-        <tbody>${subs.map((s) => {
-          const sc = s.scan || null;
-          const scMap = { clean: ["tag-teal", "通过"], malicious: ["tag-red", "恶意"], suspicious: ["tag-amber", "可疑"], notfound: ["tag", "未收录"] };
-          const [scls, slabel] = sc ? scMap[sc.status] || ["tag", sc.status] : ["tag", "未扫描"];
-          return `<tr>
-          <td class="strong">${esc(s.title)}<div class="tiny dim">${esc(s.owner_name || "")}</div></td>
-          <td><span class="tag">${esc(s.track)}</span></td>
-          <td class="mono tiny">v${s.version_no}</td>
-          <td class="tiny">${s.file_path ? esc(s.file_name || "已上传") + `<div class="tiny dim">${s.shared_path ? "已发布" : "未发布"}</div>` : '<span class="dim">—</span>'}</td>
-          <td><span class="tag ${scls}">${esc(slabel)}${sc && sc.stats ? ` ${sc.stats.malicious}/${sc.stats.total}` : ""}</span></td>
-          <td><span class="${(STATUS_TEXT[s.status] || {}).cls || "tag"}">${esc((STATUS_TEXT[s.status] || {}).label || s.status)}</span></td>
-          <td class="right nowrap">
-            <button class="btn btn-sm" data-vers="${s.id}">版本</button>
-            <button class="btn btn-sm" data-check="${s.id}">兼容性</button>
-          </td>
-        </tr>`;
-        }).join("")}</tbody>
-      </table></div>` : '<div class="empty">暂无作品</div>'}
-    </div>`;
+      <div class="review-toolbar">
+        <input id="wk-admin-q" type="search" placeholder="搜索作品、队伍" aria-label="搜索作品" />
+        <select id="wk-admin-track" aria-label="按赛道筛选">
+          <option value="">全部赛道</option>
+          ${TRACKS.map((t) => `<option value="${t.code}">${t.code} · ${esc(t.name)}</option>`).join("")}
+        </select>
+        <select id="wk-admin-status" aria-label="按状态筛选">
+          <option value="">全部状态</option>
+          <option value="submitted">待检查</option>
+          <option value="fix_required">需修复</option>
+          <option value="passed">已通过</option>
+          <option value="rejected">未通过</option>
+        </select>
+        <label class="row tiny dim" style="gap:6px;margin-left:auto;cursor:pointer">
+          <input type="checkbox" id="wk-pick-all" /> 全选可批量
+        </label>
+      </div>
+
+      <div class="bulk-bar" id="wk-bulk" hidden>
+        <span id="wk-bulk-count">已选 0 件</span>
+        <button class="btn btn-sm btn-primary" id="wk-bulk-pass" type="button">批量通过</button>
+        <button class="btn btn-sm" id="wk-bulk-reset" type="button">取消选择</button>
+      </div>
+
+      <div class="review-list" id="wk-review-list">
+        ${rows.length
+          ? rows
+              .map((s) => {
+                const st = STATUS_TEXT[s.status] || { label: s.status, cls: "tag" };
+                const sc = scanOf(s);
+                const canPick = s.status === "submitted" || s.status === "fix_required";
+                const c = s.compatibility || {};
+                return `<div class="rev-row" tabindex="0" role="button"
+                  data-id="${s.id}" data-status="${s.status}" data-track="${s.track}"
+                  data-text="${esc(`${s.title} ${s.owner_name || ""}`.toLowerCase())}"
+                  aria-label="审核 ${esc(s.title)}">
+                  <label class="rev-check" onclick="event.stopPropagation()">
+                    <input type="checkbox" data-pick="${s.id}" ${canPick ? "" : "disabled"} aria-label="选择 ${esc(s.title)}" />
+                  </label>
+                  <div class="rev-main">
+                    <div class="rev-title">
+                      <span class="rev-name">${esc(s.title)}</span>
+                      <span class="${st.cls}">${esc(st.label)}</span>
+                    </div>
+                    <div class="rev-meta mono">
+                      ${esc(s.track)} · ${esc(trackOf(s.track).name)} · v${s.version_no}
+                      ${s.file_path ? " · 包已上传" : " · 未上传"}
+                      ${c.tested_at ? ` · 上次 ${esc(fmtDate(c.tested_at))}` : ""}
+                    </div>
+                    <div class="rev-sub">
+                      <span class="tiny dim">${esc(s.owner_name || "匿名队伍")}</span>
+                      <span class="${sc.cls}">${esc(sc.label)}${sc.stats ? ` ${sc.stats.malicious}/${sc.stats.total}` : ""}</span>
+                      ${c.note ? `<span class="tiny dim rev-note">${esc(c.note)}</span>` : ""}
+                    </div>
+                  </div>
+                  <div class="rev-actions">
+                    <button class="btn btn-sm" data-vers="${s.id}" type="button">版本</button>
+                    <button class="btn btn-sm ${canPick ? "btn-primary" : ""}" data-check="${s.id}" type="button">${canPick ? "审核" : "查看"}</button>
+                  </div>
+                </div>`;
+              })
+              .join("")
+          : '<div class="empty">暂无作品</div>'}
+      </div>
+      <div class="empty" id="wk-admin-none" style="display:none">没有匹配的作品</div>
+    </div>
+
+    <p class="tiny dim" style="margin-top:2px">
+      快捷键：J / K 上下移动 · Enter 打开审核 · 弹窗内 1 通过、2 需修复、3 不通过。
+    </p>`;
 }
 
 /* ------------------------------ 评审 ------------------------------ */
 
 function reviewTab(reviews, profiles, subs) {
+  const judges = profiles.filter((p) => p.role === "judge" || p.role === "admin");
+  const works = subs.filter((s) => s.status === "passed" || s.status === "public");
+  const cap = Math.min(3, Math.max(1, judges.length));
   const byJudge = new Map();
   for (const r of reviews) {
     if (!byJudge.has(r.judge_uid)) byJudge.set(r.judge_uid, []);
     byJudge.get(r.judge_uid).push(r);
   }
   const subById = new Map(subs.map((s) => [s.id, s]));
+  const rmap = new Map(reviews.map((r) => [`${r.submission_id}:${r.judge_uid}`, r]));
+  const countFor = (sid) => reviews.filter((r) => r.submission_id === sid).length;
+  const lowCoverage = works.filter((s) => countFor(s.id) < cap);
+  const doneCount = reviews.filter((r) => r.status === "submitted").length;
+  const short = (j) => String(j.nickname || j.owner_name || "评委").slice(0, 4);
+
+  const variance = works
+    .map((s) => {
+      const list = reviews
+        .filter((r) => r.submission_id === s.id && r.status === "submitted")
+        .map((r) => Number(r.total) || 0);
+      if (list.length < 2) return null;
+      const max = Math.max(...list);
+      const min = Math.min(...list);
+      return { s, max, min, diff: max - min, n: list.length };
+    })
+    .filter(Boolean)
+    .filter((v) => v.diff >= 15)
+    .sort((a, b) => b.diff - a.diff);
 
   return `
     <div class="card block">
-      <div class="card-head"><h2>派评</h2><span class="card-note">把已通过的作品分配给评委</span></div>
-      <div class="row row-wrap" style="gap:10px;margin-bottom:10px">
-        <select id="a-track" style="max-width:190px">
+      <div class="card-head">
+        <h2>评委分配</h2>
+        <span class="card-note">${works.length} 件作品 · ${judges.length} 位评委</span>
+      </div>
+      <div class="review-stats" style="margin-bottom:14px">
+        <div class="rs"><span class="rs-k">已通过</span><b>${works.length}</b></div>
+        <div class="rs"><span class="rs-k">覆盖不足</span><b>${lowCoverage.length}</b></div>
+        <div class="rs"><span class="rs-k">已提交评分</span><b>${doneCount}</b></div>
+        <div class="rs"><span class="rs-k">待提交</span><b>${Math.max(0, reviews.length - doneCount)}</b></div>
+      </div>
+
+      ${
+        judges.length
+          ? `<div class="tbl-wrap assign-wrap"><table class="tbl assign-tbl">
+              <thead><tr><th>作品</th>${judges
+                .map((j) => `<th class="center" title="${esc(j.nickname || j.owner_name || "")}">${esc(short(j))}</th>`)
+                .join("")}<th class="center">覆盖</th></tr></thead>
+              <tbody>${
+                works.length
+                  ? works
+                      .map((s) => {
+                        const n = countFor(s.id);
+                        return `<tr>
+                          <td><div class="strong" style="font-size:12.5px">${esc(s.title)}</div>
+                            <div class="tiny dim">${esc(s.track)} · ${esc(trackOf(s.track).name)}</div></td>
+                          ${judges
+                            .map((j) => {
+                              const r = rmap.get(`${s.id}:${j.owner_id}`);
+                              const cls = r ? (r.status === "submitted" ? "done" : "on") : "";
+                              const label = r ? (r.status === "submitted" ? "✓" : "●") : "+";
+                              const tip = r ? (r.status === "submitted" ? "已提交" : "已分配，未提交") : "点击分配";
+                              return `<td class="center"><button class="assign-cell ${cls}" type="button"
+                                data-assign="${s.id}" data-judge="${j.owner_id}"
+                                aria-label="${esc(s.title)} 分配给 ${esc(j.nickname || "评委")}"
+                                title="${tip}">${label}</button></td>`;
+                            })
+                            .join("")}
+                          <td class="center mono tiny ${n < cap ? "warn-text" : ""}">${n}/${cap}</td>
+                        </tr>`;
+                      })
+                      .join("")
+                  : `<tr><td colspan="${judges.length + 2}" class="small dim">还没有已通过的作品</td></tr>`
+              }</tbody>
+            </table></div>`
+          : '<p class="small dim" style="margin:0">还没有评委，先在「评委」页添加。</p>'
+      }
+
+      <div class="row row-wrap" style="gap:10px;margin-top:14px">
+        <select id="a-track" style="max-width:180px" aria-label="赛道">
           ${TRACKS.map((t) => `<option value="${t.code}">${esc(t.name)}</option>`).join("")}
         </select>
-        <select id="a-judge" style="max-width:220px">
-          ${profiles.filter((p) => p.role === "judge" || p.role === "admin").map((j) =>
-            `<option value="${j.owner_id}">${esc(j.nickname || j.owner_name || "未命名")}（${ROLE_TEXT[j.role]}）</option>`).join("")
-            || '<option value="">尚无评委</option>'}
+        <select id="a-judge" style="max-width:200px" aria-label="评委">
+          ${
+            judges
+              .map((j) => `<option value="${j.owner_id}">${esc(j.nickname || j.owner_name || "未命名")}</option>`)
+              .join("") || '<option value="">尚无评委</option>'
+          }
         </select>
-        <button class="btn btn-primary" id="btn-assign">分配该赛道全部作品</button>
+        <button class="btn" id="btn-assign" type="button">整赛道分配</button>
+        <button class="btn btn-primary" id="btn-fill" type="button" ${works.length && judges.length ? "" : "disabled"}>
+          每件补齐到 ${cap} 位
+        </button>
       </div>
-      <p class="tiny dim" style="margin:0">重复分配会自动跳过，已存在的评分不会被覆盖。</p>
+      <p class="tiny dim" style="margin:8px 0 0">点格子即可分配：✓ 已提交，● 已分配未提交；覆盖数红色表示不足 ${cap} 位。</p>
     </div>
 
     <div class="card block">
-      <div class="card-head"><h2>评分进度</h2><span class="card-note">${reviews.filter((r) => r.status === "submitted").length} / ${reviews.length}</span></div>
-      ${byJudge.size ? [...byJudge.entries()].map(([uid, list]) => {
-        const p = profiles.find((x) => x.owner_id === uid);
-        const done = list.filter((r) => r.status === "submitted").length;
-        const pct = Math.round((done / list.length) * 100);
-        return `<div style="margin-bottom:14px">
-          <div class="row-between" style="margin-bottom:5px">
-            <span class="small">${esc(p?.nickname || p?.owner_name || uid.slice(0, 8))}</span>
-            <span class="mono tiny muted">${done} / ${list.length}</span>
-          </div>
-          <div class="bar"><i style="width:${pct}%"></i></div>
-        </div>`;
-      }).join("") : '<p class="small dim" style="margin:0">还没有分配任何作品</p>'}
+      <div class="card-head">
+        <h2>分差预警</h2>
+        <span class="card-note">最高与最低相差 ≥ 15 分</span>
+      </div>
+      ${
+        variance.length
+          ? variance
+              .map(
+                (v) => `<div class="var-row">
+                  <div style="min-width:0">
+                    <div class="strong" style="font-size:12.5px">${esc(v.s.title)}</div>
+                    <div class="tiny dim">${v.n} 位评委 · ${v.min}–${v.max} 分</div>
+                  </div>
+                  <span class="tag tag-amber">差 ${v.diff}</span>
+                </div>`
+              )
+              .join("")
+          : '<p class="small dim" style="margin:0">暂无异常分差。</p>'
+      }
+    </div>
+
+    <div class="card block">
+      <div class="card-head"><h2>评分进度</h2><span class="card-note">${doneCount} / ${reviews.length}</span></div>
+      ${
+        byJudge.size
+          ? [...byJudge.entries()]
+              .map(([uid, list]) => {
+                const p = profiles.find((x) => x.owner_id === uid);
+                const done = list.filter((r) => r.status === "submitted").length;
+                const pct = Math.round((done / list.length) * 100);
+                return `<div style="margin-bottom:14px">
+                  <div class="row-between" style="margin-bottom:5px">
+                    <span class="small">${esc(p?.nickname || p?.owner_name || uid.slice(0, 8))}</span>
+                    <span class="mono tiny muted">${done} / ${list.length}</span>
+                  </div>
+                  <div class="bar"><i style="width:${pct}%"></i></div>
+                </div>`;
+              })
+              .join("")
+          : '<p class="small dim" style="margin:0">还没有分配任何作品</p>'
+      }
     </div>
 
     <div class="card">
       <div class="card-head"><h2>已提交评分</h2><span class="card-note">按作品汇总</span></div>
-      ${reviews.filter((r) => r.status === "submitted").length ? `<div class="tbl-wrap"><table class="tbl">
+      ${
+        doneCount
+          ? `<div class="tbl-wrap"><table class="tbl">
         <thead><tr><th>作品</th><th>评委</th><th>总分</th><th>提交时间</th><th></th></tr></thead>
-        <tbody>${reviews.filter((r) => r.status === "submitted").map((r) => {
-          const s = subById.get(r.submission_id);
-          return `<tr>
+        <tbody>${reviews
+          .filter((r) => r.status === "submitted")
+          .map((r) => {
+            const s = subById.get(r.submission_id);
+            return `<tr>
             <td class="strong">${esc(s?.title || "#" + r.submission_id)}</td>
             <td class="small">${esc(r.judge_name || "—")}</td>
             <td class="mono strong">${r.total || 0}</td>
@@ -361,12 +552,13 @@ function reviewTab(reviews, profiles, subs) {
               <button class="btn btn-sm btn-ghost" data-reopen="${r.id}">退回</button>
             </td>
           </tr>`;
-        }).join("")}</tbody>
-      </table></div>` : '<p class="small dim" style="margin:0">暂无</p>'}
+          })
+          .join("")}</tbody>
+      </table></div>`
+          : '<p class="small dim" style="margin:0">暂无</p>'
+      }
     </div>`;
 }
-
-/* ------------------------------ 结果 ------------------------------ */
 
 function openReviewDetail(reviewId, ctx) {
   const r = (ctx.reviews || []).find((x) => x.id === reviewId);
@@ -1121,6 +1313,7 @@ function settingsTab(cfg, auth) {
   const ck = cfg.cnkd || {};
   const gh = cfg.github || {};
   const dn = cfg.donate || {};
+  const os = cfg.storage || {};
   // 给极验控制台的填写示例，直接用当前访问地址生成，避免填错
   const siteOrigin = typeof location !== "undefined" ? location.origin : "https://你的域名";
   const siteHost = typeof location !== "undefined" ? location.hostname : "你的域名";
@@ -1335,6 +1528,58 @@ function settingsTab(cfg, auth) {
       ${vt.hasKey ? `<label class="row" style="gap:7px;cursor:pointer"><input type="checkbox" id="vt-clear" /><span class="small">清除已保存的 Key</span></label>` : ""}
     </div>
 
+    <div class="card block">
+      <div class="card-head">
+        <h2>对象存储（作品包）</h2>
+        <span class="card-note">${os.enabled ? "已开启" : "本地磁盘"}</span>
+      </div>
+      <p class="small muted" style="margin-bottom:16px">
+        开启后作品包写入 S3 兼容存储（MinIO / Cloudflare R2 / AWS S3 / 阿里云 OSS），作品信息与账号仍在本机。
+        未开启时落本地磁盘；切换后旧文件仍可下载，可点下方「迁移本地文件」补齐。
+      </p>
+      <label class="row" style="gap:9px;cursor:pointer;margin-bottom:16px">
+        <input type="checkbox" id="os-enabled" ${os.enabled ? "checked" : ""} />
+        <span class="small">启用对象存储</span>
+      </label>
+      <div class="grid grid-2">
+        <div class="field"><label>Endpoint</label>
+          <input id="os-endpoint" value="${esc(os.endpoint || "")}" placeholder="https://<account>.r2.cloudflarestorage.com" />
+          <div class="hint">MinIO 例：http://127.0.0.1:9000；不要带结尾斜杠</div>
+        </div>
+        <div class="field"><label>Region</label>
+          <input id="os-region" value="${esc(os.region || "us-east-1")}" placeholder="auto / us-east-1 / oss-cn-hangzhou" />
+        </div>
+        <div class="field"><label>Bucket</label>
+          <input id="os-bucket" value="${esc(os.bucket || "")}" placeholder="pixelsong" />
+        </div>
+        <div class="field"><label>路径前缀</label>
+          <input id="os-prefix" value="${esc(os.prefix || "pixelsong")}" placeholder="pixelsong" />
+        </div>
+        <div class="field"><label>Access Key</label>
+          <input id="os-ak" value="${esc(os.accessKey || "")}" autocomplete="off" />
+        </div>
+        <div class="field"><label>Secret Key</label>
+          <input id="os-sk" type="password" placeholder="${os.hasSecretKey ? "已保存，留空不修改" : "Secret Access Key"}" autocomplete="new-password" />
+          ${secretHint(os.hasSecretKey, "只存服务端；建议用只授权该 bucket 的子账号")}
+        </div>
+      </div>
+      <div class="field"><label>公开访问前缀（可选）</label>
+        <input id="os-public" value="${esc(os.publicBaseUrl || "")}" placeholder="https://cdn.example.com" />
+        <div class="hint">填了也不改变权限：下载仍走站内签名，公开前缀只用于未来 CDN 加速</div>
+      </div>
+      <label class="row" style="gap:9px;cursor:pointer;margin-bottom:14px">
+        <input type="checkbox" id="os-pathstyle" ${os.pathStyle ? "checked" : ""} />
+        <span class="small">Path-style 寻址（MinIO 一般需要勾选）</span>
+      </label>
+      ${os.hasSecretKey ? `<label class="row" style="gap:7px;cursor:pointer;margin-bottom:14px"><input type="checkbox" id="os-clear-sk" /><span class="small">清除已保存的 Secret Key</span></label>` : ""}
+      <div class="row row-wrap" style="gap:10px">
+        <button class="btn" id="btn-test-storage" type="button">测试连接</button>
+        <button class="btn" id="btn-migrate-storage" type="button">迁移本地文件</button>
+        <span class="tiny dim">测试会用当前表单值写入一个临时对象再删掉。</span>
+      </div>
+      <div id="storage-out" class="storage-out"></div>
+    </div>
+
     <div class="row row-wrap" style="gap:10px">
       <button class="btn btn-primary" id="btn-save-settings">保存设置</button>
       <span class="tiny dim">保存后立即生效，无需重启容器。</span>
@@ -1342,6 +1587,110 @@ function settingsTab(cfg, auth) {
 }
 
 /* ------------------------------ 系统 ------------------------------ */
+
+/* ------------------------------ SEO ------------------------------ */
+
+function seoTab(cfg) {
+  const s = (cfg && cfg.seo) || {};
+  return `
+    <div class="card block">
+      <div class="card-head"><h2>收录诊断</h2><span class="card-note" id="seo-diag-time">检测中…</span></div>
+      <div id="seo-diag" class="seo-diag">
+        <p class="small dim" style="margin:0">正在用真实爬虫 UA 访问首页…</p>
+      </div>
+      <div class="row" style="margin-top:12px">
+        <button class="btn btn-sm" id="seo-refresh" type="button">重新检测</button>
+      </div>
+    </div>
+
+    <div class="card block">
+      <div class="card-head"><h2>站长平台验证</h2><span class="card-note">保存后立即生效，无需重启</span></div>
+      <p class="small muted" style="margin-bottom:16px">把各平台「HTML 标记」里的 <span class="mono">content</span> 值填进来，会注入所有页面 head。环境变量优先级更高。</p>
+      <div class="grid grid-3">
+        <div class="field"><label>Google</label>
+          <input id="seo-google" value="${esc(s.googleCode || "")}" placeholder="google-site-verification" autocomplete="off" /></div>
+        <div class="field"><label>百度</label>
+          <input id="seo-baidu" value="${esc(s.baiduCode || "")}" placeholder="codeva-..." autocomplete="off" /></div>
+        <div class="field"><label>Bing</label>
+          <input id="seo-bing" value="${esc(s.bingCode || "")}" placeholder="msvalidate.01" autocomplete="off" /></div>
+      </div>
+      <div class="row row-wrap" style="gap:10px">
+        <button class="btn btn-primary" id="seo-save" type="button">保存验证码</button>
+        <a class="btn btn-ghost" href="https://search.google.com/search-console" target="_blank" rel="noopener">Google 控制台 ↗</a>
+        <a class="btn btn-ghost" href="https://ziyuan.baidu.com/site/" target="_blank" rel="noopener">百度资源平台 ↗</a>
+        <a class="btn btn-ghost" href="https://www.bing.com/webmasters" target="_blank" rel="noopener">Bing 站长工具 ↗</a>
+      </div>
+    </div>
+
+    <div class="card block">
+      <div class="card-head"><h2>主动推送</h2><span class="card-note">新作品公示后点一次</span></div>
+      <div class="grid grid-2">
+        <div class="field">
+          <label>IndexNow Key</label>
+          <div class="row" style="gap:8px">
+            <input id="seo-indexnow" value="${esc(s.indexNowKey || "")}" placeholder="32 位随机字符" autocomplete="off" />
+            <button class="btn" id="seo-gen" type="button">生成</button>
+          </div>
+          <div class="hint">Key 会通过 <span class="mono">/你的Key.txt</span> 公开，用于 Bing / Yandex / Naver 验证。</div>
+        </div>
+        <div class="field">
+          <label>百度推送 Token</label>
+          <input id="seo-baidu-token" type="password" placeholder="${s.hasBaiduToken ? "已保存，留空不修改" : "百度资源平台 → 普通收录 → API 提交"}" autocomplete="new-password" />
+          ${secretHint(s.hasBaiduToken, "Token 只存服务端，不会出现在页面里")}
+        </div>
+      </div>
+      <div class="row row-wrap" style="gap:10px;margin-top:2px">
+        <button class="btn" id="seo-save-push" type="button">保存推送配置</button>
+        <button class="btn btn-primary" id="seo-push" type="button">推送全部页面</button>
+      </div>
+      <div id="seo-push-out" class="seo-push-out"></div>
+    </div>
+
+    <div class="card">
+      <div class="card-head"><h2>首页为什么还没被收录</h2></div>
+      <ul class="seo-tips small muted">
+        <li><strong>先看上面的诊断</strong>：站点地址、Sitemap、爬虫抓取、验证码四项全绿再谈收录。</li>
+        <li><strong>百度对备案敏感</strong>：未备案或境外主机收录很慢，先确认域名可访问、备案状态正常。</li>
+        <li><strong>三个平台都要手动提交</strong>：验证通过后在「站点管理 → Sitemap」提交 <span class="mono">/sitemap.xml</span>，或点上面的「推送全部页面」。</li>
+        <li><strong>新站冷启动</strong>：没有外链的新域名通常要 1–4 周，先把作品页分享出去，有真实访问才会加速。</li>
+      </ul>
+    </div>`;
+}
+
+async function loadSeoDiag(el) {
+  const box = el.querySelector("#seo-diag");
+  const time = el.querySelector("#seo-diag-time");
+  if (!box) return;
+  box.innerHTML = '<p class="small dim" style="margin:0">正在用真实爬虫 UA 访问首页…</p>';
+  try {
+    const r = await fetch("/api/seo/status", { headers: { accept: "application/json" } });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error((j && j.error) || "读取失败");
+    const d = j.data;
+    const row = (label, ok, text) =>
+      `<div class="diag-row"><span class="diag-dot ${ok ? "ok" : "bad"}"></span><span class="diag-name">${esc(label)}</span><span class="diag-val mono">${esc(text)}</span></div>`;
+    box.innerHTML = [
+      row("站点地址", d.https, d.origin),
+      ...(d.apex ? [row("根域名", d.apex.ok, d.apex.ok ? `${d.apex.status} · ${d.apex.host}` : `${d.apex.error || d.apex.status} · ${d.apex.host}`)] : []),
+      row("Sitemap", d.urls > 0, `${d.urls} 条 URL`),
+      ...d.bots.map((b) =>
+        row(
+          `${b.name} 抓取`,
+          b.status === 200 && Boolean(b.h1),
+          b.status ? `${b.status} · ${b.h1 || b.title || "无正文"}` : b.error || "失败"
+        )
+      ),
+      row("Google 验证", d.verification.google, d.verification.google ? "已配置" : "未配置"),
+      row("百度验证", d.verification.baidu, d.verification.baidu ? "已配置" : "未配置"),
+      row("IndexNow", d.indexNow.configured, d.indexNow.configured ? "已配置" : "未配置"),
+      row("百度推送", d.baiduPush.configured, d.baiduPush.configured ? "已配置" : "未配置"),
+    ].join("");
+    if (time) time.textContent = `检测于 ${new Date().toLocaleTimeString("zh-CN")}`;
+  } catch (e) {
+    box.innerHTML = `<p class="small" style="margin:0;color:var(--red)">${esc(e.message)}</p>`;
+    if (time) time.textContent = "检测失败";
+  }
+}
 
 function systemTab(health, profiles) {
   const staff = profiles.filter((p) => p.role !== "participant");
@@ -1407,6 +1756,18 @@ function systemTab(health, profiles) {
 /* ------------------------------ 事件 ------------------------------ */
 
 function wireAdmin(el, ctx) {
+  const skip = el.querySelector("#skip-main");
+  if (skip) skip.onclick = () => {
+    const main = el.querySelector(".admin-body");
+    if (!main) return;
+    main.tabIndex = -1;
+    main.focus();
+    main.scrollIntoView({ block: "start" });
+  };
+  if (el._adminAbort) el._adminAbort.abort();
+  el._adminAbort = new AbortController();
+  const ac = el._adminAbort;
+
   el.querySelectorAll("[data-team]").forEach((b) => {
     b.onclick = async () => {
       const st = b.dataset.st;
@@ -1423,12 +1784,138 @@ function wireAdmin(el, ctx) {
     };
   });
 
+  const workRows = [...el.querySelectorAll(".rev-row")];
+  const openWork = (id) => {
+    const s = ctx.subs.find((x) => x.id === Number(id));
+    if (!s) return;
+    const queue = ctx.subs
+      .filter((x) => (x.status === "submitted" || x.status === "fix_required") && x.id !== s.id)
+      .sort((a, b) => new Date(a.created_at || 0) - new Date(b.created_at || 0));
+    openCompatModal(s, () => adminView(el, "#/admin/works"), queue);
+  };
+
   el.querySelectorAll("[data-check]").forEach((b) => {
-    b.onclick = () => {
-      const s = ctx.subs.find((x) => x.id === Number(b.dataset.check));
-      openCompatModal(s, () => adminView(el, "#/admin/works"));
+    b.onclick = (e) => {
+      e.stopPropagation();
+      openWork(b.dataset.check);
     };
   });
+
+  workRows.forEach((row) => {
+    row.onclick = () => openWork(row.dataset.id);
+    row.onkeydown = (e) => {
+      if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        openWork(row.dataset.id);
+      }
+    };
+  });
+
+  const filterRows = () => {
+    const q = val(el, "#wk-admin-q").toLowerCase();
+    const tr = val(el, "#wk-admin-track");
+    const st = val(el, "#wk-admin-status");
+    let shown = 0;
+    for (const row of workRows) {
+      const hit = (!q || row.dataset.text.includes(q)) && (!tr || row.dataset.track === tr) && (!st || row.dataset.status === st);
+      row.hidden = !hit;
+      if (hit) shown++;
+    }
+    const none = el.querySelector("#wk-admin-none");
+    if (none) none.style.display = shown ? "none" : "";
+  };
+  ["#wk-admin-q", "#wk-admin-track", "#wk-admin-status"].forEach((sel) => {
+    const node = el.querySelector(sel);
+    if (node) node.oninput = node.onchange = filterRows;
+  });
+
+  const picks = () => [...el.querySelectorAll("[data-pick]:checked")];
+  const updateBulk = () => {
+    const n = picks().length;
+    const bar = el.querySelector("#wk-bulk");
+    if (bar) bar.hidden = !n;
+    const c = el.querySelector("#wk-bulk-count");
+    if (c) c.textContent = `已选 ${n} 件`;
+  };
+  el.querySelectorAll("[data-pick]").forEach((cb) => (cb.onchange = updateBulk));
+  const pickAll = el.querySelector("#wk-pick-all");
+  if (pickAll) {
+    pickAll.onchange = () => {
+      el.querySelectorAll("[data-pick]:not(:disabled)").forEach((cb) => (cb.checked = pickAll.checked));
+      updateBulk();
+    };
+  }
+  const bulkReset = el.querySelector("#wk-bulk-reset");
+  if (bulkReset) {
+    bulkReset.onclick = () => {
+      el.querySelectorAll("[data-pick]").forEach((cb) => (cb.checked = false));
+      if (pickAll) pickAll.checked = false;
+      updateBulk();
+    };
+  }
+  const bulkPass = el.querySelector("#wk-bulk-pass");
+  if (bulkPass) {
+    bulkPass.onclick = async (e) => {
+      const list = picks().map((cb) => ctx.subs.find((x) => x.id === Number(cb.dataset.pick))).filter(Boolean);
+      if (!list.length) return;
+      if (
+        !(await confirmBox(
+          "批量通过",
+          `将对 ${list.length} 件作品写入「通过」。批量操作视为四项检查均已完成，建议只用于材料齐全的作品。`,
+          "确认通过"
+        ))
+      )
+        return;
+      busy(bulkPass, true, `0/${list.length}`);
+      let done = 0;
+      for (const s of list) {
+        const prev = s.compatibility || {};
+        const history = Array.isArray(prev.history) ? prev.history.slice(-19) : [];
+        history.push({ result: "passed", note: "批量通过", at: new Date().toISOString(), by: state.me?.nickname || "主办方" });
+        try {
+          await setCompatibility(s, {
+            can_load: true,
+            deps_ok: true,
+            safe: true,
+            demo_match: true,
+            result: "passed",
+            note: "批量通过",
+            tested_at: new Date().toISOString(),
+            history,
+          });
+          done++;
+        } catch (_) {}
+        busy(bulkPass, true, `${done}/${list.length}`);
+      }
+      toast(`已通过 ${done} 件`, done === list.length ? "ok" : "err");
+      adminView(el, "#/admin/works");
+    };
+  }
+
+  if (workRows.length) {
+    let cursor = -1;
+    const focusRow = (i) => {
+      cursor = Math.max(0, Math.min(workRows.length - 1, i));
+      workRows.forEach((r, n) => r.classList.toggle("is-cursor", n === cursor));
+      workRows[cursor].focus();
+      workRows[cursor].scrollIntoView({ block: "nearest" });
+    };
+    document.addEventListener(
+      "keydown",
+      (e) => {
+        const tag = String((e.target && e.target.tagName) || "").toLowerCase();
+        if (tag === "input" || tag === "textarea" || tag === "select" || e.metaKey || e.ctrlKey || e.altKey) return;
+        if (e.key === "j" || e.key === "J") {
+          e.preventDefault();
+          focusRow(cursor + 1);
+        } else if (e.key === "k" || e.key === "K") {
+          e.preventDefault();
+          focusRow(cursor - 1);
+        }
+      },
+      { signal: ac.signal }
+    );
+  }
 
   el.querySelectorAll("[data-vers]").forEach((b) => {
     b.onclick = async () => {
@@ -1463,6 +1950,59 @@ function wireAdmin(el, ctx) {
         toast(`已分配 ${picked.length} 件`, "ok");
         adminView(el, "#/admin/review");
       } catch (err) { toast(errMsg(err), "err"); busy(e.currentTarget, false); }
+    };
+  }
+
+  el.querySelectorAll("[data-assign]").forEach((b) => {
+    b.onclick = async () => {
+      const s = ctx.subs.find((x) => x.id === Number(b.dataset.assign));
+      const j = (ctx.profiles || []).find((x) => x.owner_id === b.dataset.judge);
+      if (!s || !j) return;
+      const existing = (ctx.reviews || []).find((r) => r.submission_id === s.id && r.judge_uid === j.owner_id);
+      if (existing) {
+        return toast(existing.status === "submitted" ? "该评委已提交评分" : "已分配，等待评委提交", "ok");
+      }
+      busy(b, true, "…");
+      try {
+        await assignReviews([s], [j]);
+        toast("已分配", "ok");
+        adminView(el, "#/admin/review");
+      } catch (err) {
+        toast(errMsg(err), "err");
+        busy(b, false);
+      }
+    };
+  });
+
+  const fillBtn = el.querySelector("#btn-fill");
+  if (fillBtn) {
+    fillBtn.onclick = async (e) => {
+      const works = ctx.subs.filter((s) => s.status === "passed" || s.status === "public");
+      const judges = (ctx.profiles || []).filter((p) => p.role === "judge" || p.role === "admin");
+      const cap = Math.min(3, judges.length);
+      const plans = [];
+      for (const s of works) {
+        const assigned = new Set(
+          (ctx.reviews || []).filter((r) => r.submission_id === s.id).map((r) => r.judge_uid)
+        );
+        const missing = judges
+          .filter((j) => !assigned.has(j.owner_id))
+          .slice(0, Math.max(0, cap - assigned.size));
+        if (missing.length) plans.push({ s, judges: missing });
+      }
+      if (!plans.length) return toast("每件作品都已覆盖", "ok");
+      const total = plans.reduce((n, p) => n + p.judges.length, 0);
+      if (!(await confirmBox("补齐评委", `将为 ${plans.length} 件作品分配 ${total} 个评审任务。`, "开始分配"))) return;
+      busy(fillBtn, true, "分配中…");
+      let n = 0;
+      for (const p of plans) {
+        try {
+          await assignReviews([p.s], p.judges);
+          n += p.judges.length;
+        } catch (_) {}
+      }
+      toast(`已分配 ${n} 个任务`, "ok");
+      adminView(el, "#/admin/review");
     };
   }
 
@@ -1726,6 +2266,16 @@ function wireAdmin(el, ctx) {
           note: val(el, "#dn-note"),
           afdianUserId: val(el, "#dn-afdian-uid"),
         },
+        storage: {
+          enabled: checked(el, "#os-enabled"),
+          endpoint: val(el, "#os-endpoint"),
+          region: val(el, "#os-region") || "us-east-1",
+          bucket: val(el, "#os-bucket"),
+          prefix: val(el, "#os-prefix"),
+          accessKey: val(el, "#os-ak"),
+          publicBaseUrl: val(el, "#os-public"),
+          pathStyle: checked(el, "#os-pathstyle"),
+        },
       };
       const afToken = val(el, "#dn-afdian-token");
       if (el.querySelector("#dn-afdian-clear")?.checked) patch.donate.afdianToken = "__clear__";
@@ -1748,6 +2298,9 @@ function wireAdmin(el, ctx) {
       const ghs = val(el, "#gh-secret");
       if (el.querySelector("#gh-clear")?.checked) patch.github.clientSecret = "__clear__";
       else if (ghs) patch.github.clientSecret = ghs;
+      const osk = val(el, "#os-sk");
+      if (el.querySelector("#os-clear-sk")?.checked) patch.storage.secretKey = "__clear__";
+      else if (osk) patch.storage.secretKey = osk;
 
       busy(saveSettings, true, "保存中…");
       try {
@@ -1759,6 +2312,73 @@ function wireAdmin(el, ctx) {
         busy(saveSettings, false);
       }
     };
+  }
+
+  const testStorageBtn = el.querySelector("#btn-test-storage");
+  if (testStorageBtn) {
+    const readStorageForm = () => ({
+      enabled: true,
+      endpoint: val(el, "#os-endpoint"),
+      region: val(el, "#os-region") || "us-east-1",
+      bucket: val(el, "#os-bucket"),
+      prefix: val(el, "#os-prefix"),
+      accessKey: val(el, "#os-ak"),
+      publicBaseUrl: val(el, "#os-public"),
+      pathStyle: checked(el, "#os-pathstyle"),
+      ...(val(el, "#os-sk") ? { secretKey: val(el, "#os-sk") } : {}),
+    });
+    testStorageBtn.onclick = async () => {
+      const out = el.querySelector("#storage-out");
+      busy(testStorageBtn, true, "测试中…");
+      out.textContent = "正在写入并回读临时对象…";
+      try {
+        const r = await fetch("/.cloud/local/storage/test", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ storage: readStorageForm() }),
+        });
+        const j = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error((j.error && j.error.message) || "连接失败");
+        out.innerHTML = `<span class="ok">连接成功</span> · 写入 ${j.data.size} B · 回读 ${esc(j.data.echo || "")}`;
+        toast("对象存储可用", "ok");
+      } catch (e) {
+        out.innerHTML = `<span class="bad">${esc(errMsg(e))}</span>`;
+        toast(errMsg(e), "err");
+      } finally {
+        busy(testStorageBtn, false);
+      }
+    };
+    const migrateBtn = el.querySelector("#btn-migrate-storage");
+    if (migrateBtn) {
+      migrateBtn.onclick = async () => {
+        const out = el.querySelector("#storage-out");
+        if (
+          !(await confirmBox(
+            "迁移本地作品包",
+            "把 data/files 下的文件逐个上传到对象存储，已存在的会跳过。文件多时可能需要几分钟。",
+            "开始迁移"
+          ))
+        )
+          return;
+        busy(migrateBtn, true, "迁移中…");
+        out.textContent = "正在迁移，请不要关闭页面…";
+        try {
+          const r = await fetch("/.cloud/local/storage/migrate", { method: "POST" });
+          const j = await r.json().catch(() => ({}));
+          if (!r.ok) throw new Error((j.error && j.error.message) || "迁移失败");
+          const d = j.data;
+          out.innerHTML = `<span class="ok">迁移完成</span> · 共 ${d.total} · 上传 ${d.uploaded} · 跳过 ${d.skipped}${
+            d.failed.length ? ` · 失败 ${d.failed.length}` : ""
+          }`;
+          toast("迁移完成", "ok");
+        } catch (e) {
+          out.innerHTML = `<span class="bad">${esc(errMsg(e))}</span>`;
+          toast(errMsg(e), "err");
+        } finally {
+          busy(migrateBtn, false);
+        }
+      };
+    }
   }
 
   const testMailBtn = el.querySelector("#btn-test-mail");
@@ -1879,49 +2499,240 @@ function wireAdmin(el, ctx) {
       }
     };
   });
+
+  // SEO 诊断与推送
+  if (el.querySelector("#seo-diag")) {
+    loadSeoDiag(el);
+    el.querySelector("#seo-refresh").onclick = () => loadSeoDiag(el);
+
+    const saveSeo = async (btn, extra = {}) => {
+      busy(btn, true, "保存中…");
+      try {
+        await saveSiteSettings({
+          seo: {
+            googleCode: val(el, "#seo-google"),
+            baiduCode: val(el, "#seo-baidu"),
+            bingCode: val(el, "#seo-bing"),
+            ...extra,
+          },
+        });
+        toast("已保存", "ok");
+        loadSeoDiag(el);
+      } catch (e) {
+        toast(errMsg(e), "err");
+      } finally {
+        busy(btn, false);
+      }
+    };
+
+    el.querySelector("#seo-save").onclick = (e) => saveSeo(e.currentTarget);
+    el.querySelector("#seo-gen").onclick = () => {
+      const a = new Uint8Array(16);
+      crypto.getRandomValues(a);
+      el.querySelector("#seo-indexnow").value = Array.from(a, (b) => b.toString(16).padStart(2, "0")).join("");
+    };
+    el.querySelector("#seo-save-push").onclick = (e) => {
+      const token = val(el, "#seo-baidu-token");
+      return saveSeo(e.currentTarget, {
+        indexNowKey: val(el, "#seo-indexnow"),
+        ...(token ? { baiduToken: token } : {}),
+      });
+    };
+    el.querySelector("#seo-push").onclick = async (e) => {
+      const out = el.querySelector("#seo-push-out");
+      busy(e.currentTarget, true, "推送中…");
+      try {
+        const r = await fetch("/api/seo/push", { method: "POST" });
+        const j = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error((j && j.error) || "推送失败");
+        const d = j.data || {};
+        out.innerHTML = `<div class="push-line"><b>共 ${d.count} 条 URL</b>${
+          d.indexNow
+            ? `<span class="${d.indexNow.ok ? "ok" : "bad"}">IndexNow ${
+                d.indexNow.status || "失败"
+              }${d.indexNow.error ? " · " + esc(d.indexNow.error) : ""}</span>`
+            : ""
+        }${
+          d.baidu
+            ? `<span class="${d.baidu.ok ? "ok" : "bad"}">百度 ${d.baidu.status || "失败"}${
+                d.baidu.error ? " · " + esc(d.baidu.error) : ""
+              }</span>`
+            : ""
+        }</div>`;
+        toast("已提交推送", "ok");
+      } catch (e2) {
+        toast(errMsg(e2), "err");
+      } finally {
+        busy(e.currentTarget, false);
+      }
+    };
+  }
 }
 
-function openCompatModal(s, refresh) {
+function openCompatModal(s, refresh, queue = []) {
   const c = s.compatibility || {};
+  const history = Array.isArray(c.history) ? c.history.slice(-6).reverse() : [];
+  const st = STATUS_TEXT[s.status] || { label: s.status, cls: "tag" };
+  const templates = [
+    ["", "选择常用理由…"],
+    ["无法在锁定版本加载：启动时报错，具体信息见下。", "无法加载"],
+    ["依赖缺失或版本不匹配：缺少 / 版本不符，具体见下。", "依赖问题"],
+    ["演示视频与实际运行不一致：视频中的玩法或界面与作品包不符。", "演示不符"],
+    ["发现可疑脚本或破坏性内容：位置与表现见下。", "安全问题"],
+    ["参评材料不完整：缺少安装说明、许可证或已知问题。", "材料不全"],
+  ];
+
   const m = modal(`
-    <h3>兼容性测试 · ${esc(s.title)}</h3>
-    <p class="small muted" style="margin-bottom:14px">赛道 ${esc(s.track)} · v${s.version_no}${s.pkg_sha256 ? " · SHA " + esc(s.pkg_sha256.slice(0, 10)) + "…" : ""}</p>
-    <div class="field"><label class="row" style="gap:8px;cursor:pointer"><input type="checkbox" id="cp-load" ${c.can_load ? "checked" : ""} /> 能在锁定版本加载</label></div>
-    <div class="field"><label class="row" style="gap:8px;cursor:pointer"><input type="checkbox" id="cp-deps" ${c.deps_ok ? "checked" : ""} /> 依赖齐全、版本匹配</label></div>
-    <div class="field"><label class="row" style="gap:8px;cursor:pointer"><input type="checkbox" id="cp-safe" ${c.safe ? "checked" : ""} /> 未发现恶意代码 / 破坏性脚本</label></div>
-    <div class="field"><label class="row" style="gap:8px;cursor:pointer"><input type="checkbox" id="cp-demo" ${c.demo_match ? "checked" : ""} /> 演示视频与实际运行一致</label></div>
-    <div class="field">
-      <label>结论</label>
-      <select id="cp-result">
-        <option value="passed" ${c.result === "passed" ? "selected" : ""}>通过</option>
-        <option value="fix_required" ${c.result === "fix_required" ? "selected" : ""}>需修复（开启 2 小时窗口）</option>
-        <option value="rejected" ${c.result === "rejected" ? "selected" : ""}>不通过</option>
-        <option value="disqualified" ${c.result === "disqualified" ? "selected" : ""}>取消资格（恶意内容）</option>
-      </select>
+    <div class="compat-head">
+      <div style="min-width:0">
+        <h3 style="margin:0 0 4px">兼容性审核 · ${esc(s.title)}</h3>
+        <p class="small muted" style="margin:0">赛道 ${esc(s.track)} · v${s.version_no}${
+          s.pkg_sha256 ? " · SHA " + esc(s.pkg_sha256.slice(0, 10)) + "…" : ""
+        }${s.file_name ? " · " + esc(s.file_name) : ""}</p>
+      </div>
+      <span class="${st.cls}" style="flex:0 0 auto">${esc(st.label)}</span>
     </div>
+
+    <div class="compat-checks">
+      <label class="compat-check"><input type="checkbox" id="cp-load" ${c.can_load ? "checked" : ""} />
+        <span><b>能加载</b><small>锁定版本 + 干净环境能进入游戏</small></span></label>
+      <label class="compat-check"><input type="checkbox" id="cp-deps" ${c.deps_ok ? "checked" : ""} />
+        <span><b>依赖齐全</b><small>前置模组与版本匹配</small></span></label>
+      <label class="compat-check"><input type="checkbox" id="cp-safe" ${c.safe ? "checked" : ""} />
+        <span><b>无恶意内容</b><small>无破坏性脚本或外挂逻辑</small></span></label>
+      <label class="compat-check"><input type="checkbox" id="cp-demo" ${c.demo_match ? "checked" : ""} />
+        <span><b>演示一致</b><small>视频与实际运行一致</small></span></label>
+    </div>
+
+    <div class="grid grid-2">
+      <div class="field"><label>结论</label>
+        <select id="cp-result">
+          <option value="" ${!c.result ? "selected" : ""} disabled>请选择结论…</option>
+          <option value="passed" ${c.result === "passed" ? "selected" : ""}>通过 · 进入评审</option>
+          <option value="fix_required" ${c.result === "fix_required" ? "selected" : ""}>需修复 · 开启 2 小时窗口</option>
+          <option value="rejected" ${c.result === "rejected" ? "selected" : ""}>不通过</option>
+          <option value="disqualified" ${c.result === "disqualified" ? "selected" : ""}>取消资格 · 恶意内容</option>
+        </select>
+      </div>
+      <div class="field"><label>常用理由</label>
+        <select id="cp-tpl">${templates
+          .map(([v, label]) => `<option value="${esc(v)}">${esc(label)}</option>`)
+          .join("")}</select>
+      </div>
+    </div>
+
     <div class="field"><label>备注（会通知队伍）</label>
-      <textarea id="cp-note" placeholder="写明失败环节与具体报错">${esc(c.note || "")}</textarea></div>
-    <div class="row" style="justify-content:flex-end;gap:8px">
-      <button class="btn btn-ghost" data-x="cancel">取消</button>
-      <button class="btn btn-primary" data-x="save">保存结论</button>
+      <textarea id="cp-note" placeholder="写明失败环节与具体报错">${esc(c.note || "")}</textarea>
+      <div class="hint">结论不是「通过」时必填；写清楚现象、复现步骤与期望结果。</div>
     </div>
+
+    ${
+      history.length
+        ? `<details class="compat-history">
+            <summary>历史记录（最近 ${history.length} 次）</summary>
+            <ul>${history
+              .map(
+                (h) =>
+                  `<li><span class="mono tiny dim">${esc(fmtFull(h.at))}</span> · ${esc(
+                    (STATUS_TEXT[h.result] || {}).label || h.result || "—"
+                  )} · ${esc(h.note || "无备注")}</li>`
+              )
+              .join("")}</ul>
+          </details>`
+        : ""
+    }
+
+    <p class="compat-warn" id="cp-warn" hidden></p>
+    <div class="row" style="justify-content:flex-end;gap:8px;margin-top:16px">
+      <button class="btn btn-ghost" data-x="cancel" type="button">取消</button>
+      <button class="btn ${queue.length ? "" : "btn-primary"}" data-x="save" type="button">保存</button>
+      ${queue.length ? `<button class="btn btn-primary" data-x="next" type="button">保存并下一件</button>` : ""}
+    </div>
+    <p class="tiny dim" style="margin:10px 0 0;text-align:right">快捷键：1 通过 · 2 需修复 · 3 不通过</p>
   `);
-  m.host.querySelector('[data-x="cancel"]').onclick = () => m.close();
-  m.host.querySelector('[data-x="save"]').onclick = async (e) => {
-    busy(e.currentTarget, true, "保存中…");
+
+  const select = m.host.querySelector("#cp-result");
+  const noteEl = m.host.querySelector("#cp-note");
+  m.host.tabIndex = -1;
+
+  const warn = m.host.querySelector("#cp-warn");
+  const refreshWarn = () => {
+    const boxes = ["#cp-load", "#cp-deps", "#cp-safe", "#cp-demo"].map((s2) => m.host.querySelector(s2));
+    const unchecked = boxes.filter((b) => b && !b.checked).length;
+    warn.hidden = !(select.value === "passed" && unchecked > 0);
+    warn.textContent = warn.hidden ? "" : `还有 ${unchecked} 项检查未勾选，仍然判定通过？`;
+  };
+  select.onchange = refreshWarn;
+  ["#cp-load", "#cp-deps", "#cp-safe", "#cp-demo"].forEach((s2) => {
+    const b = m.host.querySelector(s2);
+    if (b) b.onchange = refreshWarn;
+  });
+  refreshWarn();
+
+  m.host.querySelector("#cp-tpl").onchange = (e) => {
+    const v = e.currentTarget.value;
+    e.currentTarget.value = "";
+    if (!v) return;
+    noteEl.value = noteEl.value.trim() ? `${noteEl.value.trim()}\n${v}` : v;
+    noteEl.focus();
+  };
+
+  m.host.addEventListener("keydown", (e) => {
+    const map = { 1: "passed", 2: "fix_required", 3: "rejected" };
+    if (!map[e.key]) return;
+    e.preventDefault();
+    select.value = map[e.key];
+    select.focus();
+  });
+  m.host.focus();
+
+  const save = async (btn, next) => {
+    const result = select.value;
+    const note = noteEl.value.trim();
+    if (!result) {
+      toast("请选择结论", "err");
+      select.focus();
+      return;
+    }
+    if (result !== "passed" && !note) {
+      toast("请填写备注，队伍需要知道问题在哪", "err");
+      noteEl.focus();
+      return;
+    }
+    const prevHistory = Array.isArray(c.history) ? c.history.slice(-19) : [];
+    prevHistory.push({
+      result,
+      note,
+      at: new Date().toISOString(),
+      by: state.me?.nickname || state.me?.owner_name || "主办方",
+    });
+    busy(btn, true, "保存中…");
     try {
       await setCompatibility(s, {
         can_load: checked(m.host, "#cp-load"),
         deps_ok: checked(m.host, "#cp-deps"),
         safe: checked(m.host, "#cp-safe"),
         demo_match: checked(m.host, "#cp-demo"),
-        result: val(m.host, "#cp-result"),
-        note: val(m.host, "#cp-note"),
+        result,
+        note,
         tested_at: new Date().toISOString(),
+        history: prevHistory,
       });
       toast("结论已保存", "ok");
       m.close();
       refresh();
-    } catch (err) { toast(errMsg(err), "err"); busy(e.currentTarget, false); }
+      if (next && queue.length) {
+        const [n, ...rest] = queue;
+        openCompatModal(n, refresh, rest);
+      }
+    } catch (err) {
+      toast(errMsg(err), "err");
+      busy(btn, false);
+    }
   };
+
+  m.host.querySelector('[data-x="cancel"]').onclick = () => m.close();
+  m.host.querySelector('[data-x="save"]').onclick = (e) => save(e.currentTarget, false);
+  const nextBtn = m.host.querySelector('[data-x="next"]');
+  if (nextBtn) nextBtn.onclick = (e) => save(e.currentTarget, true);
 }
