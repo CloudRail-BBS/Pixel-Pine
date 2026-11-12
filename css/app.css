@@ -1921,7 +1921,7 @@ a.org-card:hover .org-out { opacity: 1; }
   font-size: 12px;
   line-height: 1.7;
   color: var(--muted);
-  max-width: 26ch;
+  max-width: 32ch;
 }
 .track-foot {
   position: relative;
