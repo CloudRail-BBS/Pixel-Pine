@@ -144,13 +144,15 @@ export async function homeView(el) {
 };</code></pre>
           <div class="terminal-foot mono">STATUS · ${cd.over ? "CLOSED" : "OPEN FOR SUBMISSION"}</div>
         </div>
-        <div class="countdown">
+        <div class="countdown${cd.over ? " is-over" : ""}">
           <div class="cd-label mono">${cd.over ? "提交已截止" : "距提交截止"}</div>
-          <div class="cd-digits">
+          ${cd.over
+            ? `<div class="cd-closed mono">${esc(fmtDate(a.submitDeadline))}</div>`
+            : `<div class="cd-digits">
             <b>${pad2(cdD)}</b><span>D</span>
             <b>${pad2(cdH)}</b><span>H</span>
             <b>${pad2(cdM)}</b><span>M</span>
-          </div>
+          </div>`}
         </div>
       </div>
     </section>
